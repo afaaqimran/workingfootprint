@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Footprint Charts</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        * {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background: #131722;
+            color: #d1d4dc;
+            overflow: hidden;
+        }
+
+        .controls {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(43, 43, 67, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            padding: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            max-height: 25vh;
+            overflow-y: auto;
+        }
+
+        .btn {
+            background: #2B2B43;
+            color: #d1d4dc;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 8px 12px;
+            font-size: 12px;
+            cursor: pointer;
+            white-space: nowrap;
+            min-height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn.active {
+            background: #26a69a;
+            border-color: #26a69a;
+        }
+
+        #symbol {
+            background: #2B2B43;
+            color: #d1d4dc;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 8px 12px;
+            font-size: 12px;
+            min-height: 36px;
+            min-width: 120px;
+        }
+
+        .filter-input {
+            background: #2B2B43;
+            color: #d1d4dc;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 8px 12px;
+            font-size: 12px;
+            min-height: 36px;
+            width: 80px;
+            text-align: center;
+        }
+
+        .filter-label {
+            color: #d1d4dc;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            padding: 0 8px;
+            white-space: nowrap;
+        }
+
+        .status {
+            display: none;
+        }
+
+        #chart-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #overlay-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #footprint-canvas,
+        #trade-canvas,
+        #line-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+
+        #line-canvas {
+            pointer-events: auto;
+        }
+
+        .logout-btn {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1001;
+            background: #ef5350;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 12px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <button class="logout-btn" onclick="logout()">Logout</button>
+
+    <div class="controls">
+        <select id="symbol" class="btn">
+            <option value="">Loading contracts...</option>
+        </select>
+        <button class="btn" data-tf="1">1m</button>
+        <button class="btn active" data-tf="3">3m</button>
+        <button class="btn" data-tf="5">5m</button>
+        <button class="btn" data-tf="15">15m</button>
+        <button id="footprint" class="btn">⚙️ Footprint</button>
+        <button id="play" class="btn active">▶ Play</button>
+        <button class="btn active" data-speed="1">1x</button>
+        <button class="btn" data-speed="2">2x</button>
+        <button class="btn" data-speed="3">3x</button>
+
+        <span class="filter-label">Buy Qty</span>
+        <input type="number" id="buyQtyFilter" class="filter-input" placeholder="0" min="0" value="0">
+
+        <span class="filter-label">Sell Qty</span>
+        <input type="number" id="sellQtyFilter" class="filter-input" placeholder="0" min="0" value="0">
+
+        <span class="filter-label">Trace</span>
+        <input type="number" id="traceFilter" class="filter-input" placeholder="0" min="0" value="0">
+
+        <button id="horizontal-line" class="btn">📏 Line</button>
+        <button id="vertical-measure" class="btn">📐 Measure</button>
+        <button id="fullscreen" class="btn">⛶ Full</button>
+    </div>
+
+    <div class="status">
+        <div><span id="status-text">● Loading...</span></div>
+        <div>Symbol: <span id="current-symbol">NIFTY</span></div>
+        <div>Status: <span id="connection-status">Connecting...</span></div>
+    </div>
+
+    <div id="chart-container">
+        <div id="overlay-container">
+            <canvas id="footprint-canvas"></canvas>
+            <canvas id="trade-canvas"></canvas>
+            <canvas id="line-canvas"></canvas>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        let chart, candleSeries;
+        let currentSymbol = 'NIFTY_DEC', currentTimeframe = '3';
+        let footprintEnabled = false, isPlaying = false;
+        let horizontalLineMode = false, verticalMeasureMode = false;
+        let liveData = [], socket;
+        let lastPrice = 0;
+        let footprintCtx;
+        let footprintData = new Map(); // Store footprint levels by price
+
+        const drawFootprint = () => {
+            if (!footprintCtx || !chart || !footprintEnabled || liveData.length === 0) {
+                if (footprintCtx) {
+                    const rect = document.getElementById('chart-container').getBoundingClientRect();
+                    footprintCtx.clearRect(0, 0, rect.width, rect.height);
+                }
+                return;
+            }
+
+            // Get filter values
+            const buyQtyFilter = parseInt(document.getElementById('buyQtyFilter').value) || 0;
+            const sellQtyFilter = parseInt(document.getElementById('sellQtyFilter').value) || 0;
+            const traceFilter = parseInt(document.getElementById('traceFilter').value) || 0;
+
+            const container = document.getElementById('chart-container');
+            const rect = container.getBoundingClientRect();
+            footprintCtx.clearRect(0, 0, rect.width, rect.height);
+
+            const visibleRange = chart.timeScale().getVisibleRange();
+            if (!visibleRange) return;
+
+            footprintCtx.font = '11px Arial';
+            footprintCtx.textAlign = 'center';
+
+            liveData.forEach(candle => {
+                if (candle.time < visibleRange.from || candle.time > visibleRange.to) return;
+                if (!candle.footprint_levels || Object.keys(candle.footprint_levels).length === 0) return;
+
+                const x = chart.timeScale().timeToCoordinate(candle.time);
+                if (x === null) return;
+
+                // Draw footprint at each price level
+                Object.values(candle.footprint_levels).forEach(level => {
+                    const y = candleSeries.priceToCoordinate(level.price);
+                    if (y === null || y < 0 || y > rect.height - 40) return;
+
+                    // Apply filters
+                    // Trace filter applies to both buy and sell quantities separately
+                    const buyMeetsTrace = traceFilter === 0 || level.buy_qty >= traceFilter;
+                    const sellMeetsTrace = traceFilter === 0 || level.sell_qty >= traceFilter;
+
+                    // Individual filters highlight values that meet thresholds
+                    const highlightBuy = level.buy_qty >= buyQtyFilter && buyQtyFilter > 0;
+                    const highlightSell = level.sell_qty >= sellQtyFilter && sellQtyFilter > 0;
+
+                    // Show values only if they meet trace filter criteria
+                    const showBuy = level.buy_qty > 0 && buyMeetsTrace;
+                    const showSell = level.sell_qty > 0 && sellMeetsTrace;
+
+                    // Draw buy quantity (right side, green)
+                    if (showBuy && level.buy_qty > 0) {
+                        const buyText = formatNumber(level.buy_qty);
+                        const buyMetrics = footprintCtx.measureText(buyText);
+                        const buyWidth = buyMetrics.width + 8;
+                        const height = 16;
+
+                        // Background - highlight if meets individual filter criteria
+                        if (highlightBuy) {
+                            footprintCtx.fillStyle = 'rgba(138, 43, 226, 0.8)'; // Purple highlight
+                        } else {
+                            footprintCtx.fillStyle = 'rgba(0, 0, 0, 0.75)'; // Normal background
+                        }
+                        footprintCtx.fillRect(x + 15 - buyWidth / 2, y - height / 2, buyWidth, height);
+
+                        // Border
+                        footprintCtx.strokeStyle = '#26a69a';
+                        footprintCtx.lineWidth = 1;
+                        footprintCtx.strokeRect(x + 15 - buyWidth / 2, y - height / 2, buyWidth, height);
+
+                        // Text
+                        footprintCtx.fillStyle = '#ffffff';
+                        footprintCtx.fillText(buyText, x + 15, y + 4);
+                    }
+
+                    // Draw sell quantity (left side, red)
+                    if (showSell && level.sell_qty > 0) {
+                        const sellText = formatNumber(level.sell_qty);
+                        const sellMetrics = footprintCtx.measureText(sellText);
+                        const sellWidth = sellMetrics.width + 8;
+                        const height = 16;
+
+                        // Background - highlight if meets individual filter criteria
+                        if (highlightSell) {
+                            footprintCtx.fillStyle = 'rgba(138, 43, 226, 0.8)'; // Purple highlight
+                        } else {
+                            footprintCtx.fillStyle = 'rgba(0, 0, 0, 0.75)'; // Normal background
+                        }
+                        footprintCtx.fillRect(x - 15 - sellWidth / 2, y - height / 2, sellWidth, height);
+
+                        // Border
+                        footprintCtx.strokeStyle = '#ef5350';
+                        footprintCtx.lineWidth = 1;
+                        footprintCtx.strokeRect(x - 15 - sellWidth / 2, y - height / 2, sellWidth, height);
+
+                        // Text
+                        footprintCtx.fillStyle = '#ffffff';
+                        footprintCtx.fillText(sellText, x - 15, y + 4);
+                    }
+                });
+            });
+        };
+
+        // Initialize WebSocket connection
+        function initWebSocket() {
+            socket = io();
+
+            socket.on('connect', () => {
+                console.log('WebSocket connected');
+                updateStatus('Live Data Connected', '#26a69a');
+                document.getElementById('connection-status').textContent = 'Live';
+                isPlaying = true; // Auto-start live data
+                updatePlayButton();
+            });
+
+            socket.on('disconnect', () => {
+                console.log('WebSocket disconnected');
+                updateStatus('WebSocket Disconnected', '#ef5350');
+                document.getElementById('connection-status').textContent = 'Disconnected';
+                isPlaying = false;
+                updatePlayButton();
+            });
+
+            socket.on('ohlc_data', (data) => {
+                console.log('Received OHLC data:', data);
+
+                // Always process historical data, only check isPlaying for live data
+                if (data.historical || isPlaying) {
+                    updateWithOHLC(data);
+
+                    // Process footprint data
+                    if (data.footprint_level) {
+                        const level = data.footprint_level;
+                        footprintData.set(level.price, level);
+
+                        // Redraw footprint if enabled
+                        if (footprintEnabled) {
+                            drawFootprint();
+                        }
+                    }
+
+                    const price = data.ltp || data.close || 0;
+                    const status = data.historical ? 'Loading History' : 'Live';
+                    document.getElementById('connection-status').textContent = `${status}: ${price.toFixed(2)}`;
+                }
+            });
+        }
+
+        // Initialize chart
+        function initChart() {
+            const container = document.getElementById('chart-container');
+            chart = LightweightCharts.createChart(container, {
+                width: window.innerWidth,
+                height: window.innerHeight,
+                layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc' },
+                grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+                rightPriceScale: { borderColor: '#2B2B43', autoScale: true },
+                timeScale: {
+                    borderColor: '#2B2B43',
+                    timeVisible: true,
+                    secondsVisible: false
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal
+                },
+                localization: {
+                    timeFormatter: (time) => {
+                        // Subtract IST offset since we added it to timestamps
+                        const utcTime = time - 19800;
+                        const date = new Date(utcTime * 1000);
+                        return date.toLocaleTimeString('en-IN', {
+                            timeZone: 'Asia/Kolkata',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        });
+                    }
+                }
+            });
+
+            candleSeries = chart.addCandlestickSeries({
+                upColor: '#26a69a', downColor: '#ef5350',
+                borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+            });
+
+            setupFootprintCanvas();
+            generateInitialData();
+            updateChart();
+        }
+
+        // Setup footprint canvas overlay
+        function setupFootprintCanvas() {
+            const container = document.getElementById('chart-container');
+            const rect = container.getBoundingClientRect();
+            const canvas = document.getElementById('footprint-canvas');
+            const dpr = window.devicePixelRatio || 1;
+
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+
+            footprintCtx = canvas.getContext('2d');
+            footprintCtx.scale(dpr, dpr);
+        }
+
+        // Format numbers for display
+        function formatNumber(num) {
+            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+            return num.toString();
+        }
+
+
+        // Update play button display
+        function updatePlayButton() {
+            const btn = document.getElementById('play');
+            btn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+            btn.classList.toggle('active', isPlaying);
+        }
+
+        // Initialize empty data - start fresh with live data only
+        function generateInitialData() {
+            liveData = [];
+            lastPrice = 0;
+        }
+
+        // Update chart with OHLC data and accumulate footprint at price levels
+        function updateWithOHLC(ohlcData) {
+            // Use timestamp from API data - convert to Unix timestamp in seconds
+            let currentTime;
+            if (ohlcData.timestamp) {
+                if (typeof ohlcData.timestamp === 'string') {
+                    // Try to parse as ISO string first
+                    const parsed = Date.parse(ohlcData.timestamp);
+                    if (!isNaN(parsed)) {
+                        // Valid ISO string
+                        currentTime = Math.floor(parsed / 1000);
+                    } else {
+                        // Try parsing as numeric string (milliseconds)
+                        const numericTimestamp = parseInt(ohlcData.timestamp, 10);
+                        if (!isNaN(numericTimestamp)) {
+                            currentTime = Math.floor(numericTimestamp / 1000);
+                        } else {
+                            currentTime = Math.floor(Date.now() / 1000);
+                        }
+                    }
+                } else {
+                    // Convert millisecond timestamp to seconds
+                    currentTime = Math.floor(ohlcData.timestamp / 1000);
+                }
+
+                // Validate timestamp is reasonable (not in far future or past)
+                const now = Math.floor(Date.now() / 1000);
+                const oneYearAgo = now - (365 * 24 * 60 * 60);
+                const oneYearFuture = now + (365 * 24 * 60 * 60);
+
+                if (currentTime < oneYearAgo || currentTime > oneYearFuture || isNaN(currentTime)) {
+                    console.warn('Invalid timestamp detected:', ohlcData.timestamp, 'converted to:', currentTime, 'using current time instead');
+                    currentTime = now;
+                }
+
+                // Add IST offset (+5:30 = 19800 seconds) for chart display
+                // This makes the chart show IST time instead of UTC
+                currentTime += 19800;
+            } else {
+                // Fallback to current time with IST offset
+                currentTime = Math.floor(Date.now() / 1000) + 19800;
+            }
+
+            console.log('Processing candle with timestamp:', currentTime, 'Date:', new Date((currentTime - 19800) * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }));
+
+            // Always create new candles for different timestamps
+            const existingCandleIndex = liveData.findIndex(candle => candle.time === currentTime);
+
+            if (existingCandleIndex !== -1) {
+                // Update existing candle
+                const existingCandle = liveData[existingCandleIndex];
+                const updatedCandle = {
+                    ...existingCandle,
+                    open: ohlcData.open || existingCandle.open,
+                    high: Math.max(existingCandle.high, ohlcData.high || ohlcData.ltp || existingCandle.high),
+                    low: Math.min(existingCandle.low, ohlcData.low || ohlcData.ltp || existingCandle.low),
+                    close: ohlcData.close || ohlcData.ltp || existingCandle.close,
+                    footprint_levels: { ...existingCandle.footprint_levels }
+                };
+
+                // Add footprint data
+                if (ohlcData.footprint_level && ohlcData.footprint_level.price) {
+                    const price = Math.round(ohlcData.footprint_level.price * 4) / 4;
+                    if (updatedCandle.footprint_levels[price]) {
+                        updatedCandle.footprint_levels[price].buy_qty += ohlcData.footprint_level.buy_qty || 0;
+                        updatedCandle.footprint_levels[price].sell_qty += ohlcData.footprint_level.sell_qty || 0;
+                    } else {
+                        updatedCandle.footprint_levels[price] = {
+                            price: price,
+                            buy_qty: ohlcData.footprint_level.buy_qty || 0,
+                            sell_qty: ohlcData.footprint_level.sell_qty || 0
+                        };
+                    }
+                }
+
+                liveData[existingCandleIndex] = updatedCandle;
+                lastPrice = updatedCandle.close;
+                console.log('Updated existing candle at IST', new Date(currentTime * 1000));
+            } else {
+                // Create new candle
+                const newCandle = {
+                    time: currentTime,
+                    open: ohlcData.open || ohlcData.ltp,
+                    high: ohlcData.high || ohlcData.ltp,
+                    low: ohlcData.low || ohlcData.ltp,
+                    close: ohlcData.close || ohlcData.ltp,
+                    footprint_levels: {}
+                };
+
+                // Add footprint data
+                if (ohlcData.footprint_level && ohlcData.footprint_level.price) {
+                    const price = Math.round(ohlcData.footprint_level.price * 4) / 4;
+                    newCandle.footprint_levels[price] = {
+                        price: price,
+                        buy_qty: ohlcData.footprint_level.buy_qty || 0,
+                        sell_qty: ohlcData.footprint_level.sell_qty || 0
+                    };
+                }
+
+                liveData.push(newCandle);
+                lastPrice = newCandle.close;
+                console.log('Created new candle at IST', new Date(currentTime * 1000), 'Total candles:', liveData.length);
+            }
+
+            // Sort by timestamp to maintain chronological order
+            liveData.sort((a, b) => a.time - b.time);
+
+            // Keep only last 200 candles
+            if (liveData.length > 200) {
+                liveData = liveData.slice(-200);
+            }
+
+            // Update chart with sorted data
+            candleSeries.setData(liveData);
+            drawFootprint();
+        }
+
+        function updateChart() {
+            if (candleSeries && liveData.length > 0) {
+                candleSeries.setData(liveData);
+                updateStatus('Chart Updated', '#26a69a');
+            }
+        }
+
+        function updateStatus(text, color) {
+            document.getElementById('status-text').textContent = `● ${text}`;
+            document.getElementById('status-text').style.color = color;
+        }
+
+        // Event listeners
+        document.getElementById('symbol').addEventListener('change', async (e) => {
+            currentSymbol = e.target.value;
+            const selectedOption = e.target.selectedOptions[0];
+            const instrumentToken = selectedOption.getAttribute('data-instrument');
+            const lotSize = parseInt(selectedOption.getAttribute('data-lot-size')) || 75;
+
+            document.getElementById('current-symbol').textContent = selectedOption.textContent;
+
+            // Call API to change instrument
+            try {
+                const response = await fetch('/api/change-instrument', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        symbol: currentSymbol,
+                        instrument_token: instrumentToken,
+                        lot_size: lotSize
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    updateStatus(`Switched to ${selectedOption.textContent}`, '#26a69a');
+                    // Clear existing data
+                    liveData = [];
+                    updateChart();
+                    // Load stored data for the new instrument
+                    loadStoredData();
+                } else {
+                    updateStatus(`Error: ${result.message}`, '#ef5350');
+                }
+            } catch (error) {
+                updateStatus(`Error changing instrument: ${error.message}`, '#ef5350');
+            }
+        });
+
+        document.querySelectorAll('[data-tf]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                document.querySelectorAll('[data-tf]').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentTimeframe = btn.dataset.tf;
+
+                // Call API to change timeframe and load historical data
+                try {
+                    const response = await fetch('/api/change-timeframe', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ timeframe: currentTimeframe })
+                    });
+
+                    const result = await response.json();
+                    if (result.success) {
+                        updateStatus(`Switched to ${currentTimeframe}m timeframe`, '#26a69a');
+                        // Clear existing data
+                        liveData = [];
+                        updateChart();
+                    } else {
+                        updateStatus(`Error: ${result.message}`, '#ef5350');
+                    }
+                } catch (error) {
+                    updateStatus(`Error changing timeframe: ${error.message}`, '#ef5350');
+                }
+            });
+        });
+
+
+
+        document.getElementById('play').addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            updatePlayButton();
+
+            if (isPlaying) {
+                updateStatus('Live Data Resumed', '#26a69a');
+            } else {
+                updateStatus('Live Data Paused', '#888');
+                document.getElementById('connection-status').textContent = 'Paused';
+            }
+        });
+
+        document.getElementById('horizontal-line').addEventListener('click', () => {
+            horizontalLineMode = !horizontalLineMode;
+            document.getElementById('horizontal-line').classList.toggle('active', horizontalLineMode);
+            if (horizontalLineMode) {
+                verticalMeasureMode = false;
+                document.getElementById('vertical-measure').classList.remove('active');
+            }
+            updateStatus(`Line Tool ${horizontalLineMode ? 'ON' : 'OFF'}`, '#26a69a');
+        });
+
+        document.getElementById('vertical-measure').addEventListener('click', () => {
+            verticalMeasureMode = !verticalMeasureMode;
+            document.getElementById('vertical-measure').classList.toggle('active', verticalMeasureMode);
+            if (verticalMeasureMode) {
+                horizontalLineMode = false;
+                document.getElementById('horizontal-line').classList.remove('active');
+            }
+            updateStatus(`Measure Tool ${verticalMeasureMode ? 'ON' : 'OFF'}`, '#26a69a');
+        });
+
+        document.getElementById('fullscreen').addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+                updateStatus('Fullscreen ON', '#26a69a');
+            } else {
+                document.exitFullscreen();
+                updateStatus('Fullscreen OFF', '#26a69a');
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (chart) {
+                chart.applyOptions({
+                    width: window.innerWidth,
+                    height: window.innerHeight
+                });
+                setupFootprintCanvas();
+                drawFootprint();
+            }
+        });
+
+        // Logout function
+        function logout() {
+            if (confirm('Are you sure you want to logout?')) {
+                window.location.href = '/logout';
+            }
+        }
+
+        // Load available contracts dynamically
+        async function loadContracts() {
+            try {
+                const response = await fetch('/api/user-symbols');
+                const result = await response.json();
+
+                if (result.success && result.data && result.data.length > 0) {
+                    const symbolSelect = document.getElementById('symbol');
+                    symbolSelect.innerHTML = ''; // Clear loading message
+
+                    let defaultContractSet = false;
+
+                    // Populate dropdown with contracts
+                    result.data.forEach((contract, index) => {
+                        const option = document.createElement('option');
+                        option.value = contract.symbol;
+                        option.setAttribute('data-instrument', contract.instrument_key);
+                        option.setAttribute('data-tradingsymbol', contract.tradingsymbol);
+                        option.setAttribute('data-lot-size', contract.lot_size || 75);
+                        option.textContent = contract.display_name;
+
+                        // Select first NIFTY contract by default (nearest expiry, current month)
+                        if (!defaultContractSet && contract.type === 'NIFTY') {
+                            option.selected = true;
+                            currentSymbol = contract.symbol;
+                            defaultContractSet = true;
+                            console.log(`Default contract selected: ${contract.display_name} (${contract.instrument_key})`);
+                        }
+
+                        symbolSelect.appendChild(option);
+                    });
+
+                    console.log(`✅ Loaded ${result.data.length} contracts`);
+                    updateStatus(`Loaded ${result.data.length} contracts`, '#26a69a');
+                } else {
+                    console.error('No contracts available');
+                    updateStatus('No contracts available', '#ef5350');
+                }
+            } catch (error) {
+                console.error('Error loading contracts:', error);
+                updateStatus('Error loading contracts', '#ef5350');
+            }
+        }
+
+        // Check authentication
+        async function checkAuth() {
+            try {
+                const response = await fetch('/api/current-user');
+                const data = await response.json();
+                if (!data.success) {
+                    window.location.href = '/';
+                    return;
+                }
+                updateStatus('Authenticated', '#26a69a');
+            } catch (error) {
+                updateStatus('Auth Error', '#ef5350');
+            }
+        }
+
+        // Load stored data from database
+        async function loadStoredData() {
+            try {
+                updateStatus('Loading stored data...', '#888');
+                const response = await fetch(`/api/stored-data?symbol=${currentSymbol}&timeframe=${currentTimeframe}&days=5`);
+                const result = await response.json();
+
+                if (result.success && result.data && result.data.length > 0) {
+                    console.log(`Loading ${result.count} stored candles from database`);
+
+                    // Process stored data
+                    result.data.forEach(data => {
+                        updateWithOHLC(data);
+                    });
+
+                    updateStatus(`Loaded ${result.count} stored candles`, '#26a69a');
+                    console.log(`Successfully loaded ${result.count} candles from database`);
+                } else {
+                    console.log('No stored data available, starting fresh');
+                    updateStatus('No stored data - starting fresh', '#888');
+                }
+            } catch (error) {
+                console.error('Error loading stored data:', error);
+                updateStatus('Error loading stored data', '#ef5350');
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', async () => {
+            checkAuth();
+            initChart();
+
+            // Load available contracts
+            await loadContracts();
+
+            // Load stored data before connecting WebSocket
+            await loadStoredData();
+
+            // Then connect WebSocket for live updates
+            initWebSocket();
+            setupOverlayCanvases();
+
+            // Setup footprint toggle
+            document.getElementById('footprint').addEventListener('click', toggleFootprint);
+
+            // Setup filter inputs
+            document.getElementById('buyQtyFilter').addEventListener('input', () => {
+                if (footprintEnabled) {
+                    drawFootprint();
+                }
+            });
+
+            document.getElementById('sellQtyFilter').addEventListener('input', () => {
+                if (footprintEnabled) {
+                    drawFootprint();
+                }
+            });
+
+            document.getElementById('traceFilter').addEventListener('input', () => {
+                if (footprintEnabled) {
+                    drawFootprint();
+                }
+            });
+
+            updateStatus('Ready - Live Data Auto-Starting...', '#26a69a');
+        });
+
+        // Toggle footprint display
+        function toggleFootprint() {
+            footprintEnabled = !footprintEnabled;
+            const btn = document.getElementById('footprint');
+            btn.classList.toggle('active', footprintEnabled);
+
+            if (footprintEnabled) {
+                drawFootprint();
+            } else if (footprintCtx) {
+                footprintCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+            }
+        }
+
+        // Setup overlay canvases
+        function setupOverlayCanvases() {
+            const container = document.getElementById('chart-container');
+            const rect = container.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+
+            const canvas = document.getElementById('footprint-canvas');
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+
+            footprintCtx = canvas.getContext('2d');
+            footprintCtx.scale(dpr, dpr);
+        }
+    </script>
+</body>
+
+</html>

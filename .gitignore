@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.db
+instruments_cache.json
+*.pyc
+.DS_Store
+footprint_web_app_upstox.py.backup.*

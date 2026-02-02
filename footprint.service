@@ -1,0 +1,13 @@
+[Unit]
+Description=Footprint Chart Application
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/footprintupstox
+Environment="PATH=/opt/footprintupstox/venv/bin"
+ExecStart=/opt/footprintupstox/venv/bin/gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5001 footprint_web_app_upstox:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
