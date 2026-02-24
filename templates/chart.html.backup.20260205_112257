@@ -120,7 +120,7 @@
             pointer-events: none;
         }
 
-        #line-canvas.active {
+        #line-canvas {
             pointer-events: auto;
         }
 
@@ -147,26 +147,27 @@
         <select id="symbol" class="btn">
             <option value="">Loading contracts...</option>
         </select>
-        <button class="btn" data-tf="1">1m</button>
-        <button class="btn active" data-tf="3">3m</button>
+        <button class="btn active" data-tf="1">1m</button>
+        <button class="btn" data-tf="3">3m</button>
         <button class="btn" data-tf="5">5m</button>
         <button class="btn" data-tf="15">15m</button>
         <button id="footprint" class="btn">⚙️ Footprint</button>
         <button id="play" class="btn active">▶ Play</button>
+        <button class="btn active" data-speed="1">1x</button>
+        <button class="btn" data-speed="2">2x</button>
+        <button class="btn" data-speed="3">3x</button>
 
         <span class="filter-label">Buy Qty</span>
-        <input type="number" id="buyQtyFilter" class="filter-input" placeholder="20000" min="0" value="20000">
+        <input type="number" id="buyQtyFilter" class="filter-input" placeholder="0" min="0" value="0">
 
         <span class="filter-label">Sell Qty</span>
-        <input type="number" id="sellQtyFilter" class="filter-input" placeholder="20000" min="0" value="20000">
+        <input type="number" id="sellQtyFilter" class="filter-input" placeholder="0" min="0" value="0">
 
         <span class="filter-label">Trace</span>
-        <input type="number" id="traceFilter" class="filter-input" placeholder="10000" min="0" value="10000">
-
-        <span class="filter-label">Alert</span>
-        <input type="number" id="alertThreshold" class="filter-input" placeholder="0" min="0" value="0">
+        <input type="number" id="traceFilter" class="filter-input" placeholder="0" min="0" value="0">
 
         <button id="horizontal-line" class="btn">📏 Line</button>
+        <button id="vertical-measure" class="btn">📐 Measure</button>
         <button id="fullscreen" class="btn">⛶ Full</button>
     </div>
 
@@ -188,17 +189,13 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script>
         let chart, candleSeries;
-        let currentSymbol = 'NIFTY_DEC', currentTimeframe = '3';
+        let currentSymbol = 'NIFTY_DEC', currentTimeframe = '1';
         let footprintEnabled = false, isPlaying = false;
         let horizontalLineMode = false, verticalMeasureMode = false;
         let liveData = [], socket;
         let lastPrice = 0;
-        let footprintCtx, lineCtx;
+        let footprintCtx;
         let footprintData = new Map(); // Store footprint levels by price
-        let drawnLines = [];
-        let selectedLineIndex = -1;
-        let alertAudio = null;
-        let alertTimeout = null;
 
         const drawFootprint = () => {
             if (!footprintCtx || !chart || !footprintEnabled || liveData.length === 0) {
@@ -231,15 +228,8 @@
                 const x = chart.timeScale().timeToCoordinate(candle.time);
                 if (x === null) return;
 
-                // Sort footprint levels by total quantity (lower values first, higher values drawn last/on top)
-                const sortedLevels = Object.values(candle.footprint_levels).sort((a, b) => {
-                    const totalA = a.buy_qty + a.sell_qty;
-                    const totalB = b.buy_qty + b.sell_qty;
-                    return totalA - totalB;
-                });
-
                 // Draw footprint at each price level
-                sortedLevels.forEach(level => {
+                Object.values(candle.footprint_levels).forEach(level => {
                     const y = candleSeries.priceToCoordinate(level.price);
                     if (y === null || y < 0 || y > rect.height - 40) return;
 
@@ -267,7 +257,7 @@
                         if (highlightBuy) {
                             footprintCtx.fillStyle = 'rgba(138, 43, 226, 0.8)'; // Purple highlight
                         } else {
-                            footprintCtx.fillStyle = 'rgba(0, 0, 0, 0)'; // Transparent background
+                            footprintCtx.fillStyle = 'rgba(0, 0, 0, 0.75)'; // Normal background
                         }
                         footprintCtx.fillRect(x + 15 - buyWidth / 2, y - height / 2, buyWidth, height);
 
@@ -292,7 +282,7 @@
                         if (highlightSell) {
                             footprintCtx.fillStyle = 'rgba(138, 43, 226, 0.8)'; // Purple highlight
                         } else {
-                            footprintCtx.fillStyle = 'rgba(0, 0, 0, 0)'; // Transparent background
+                            footprintCtx.fillStyle = 'rgba(0, 0, 0, 0.75)'; // Normal background
                         }
                         footprintCtx.fillRect(x - 15 - sellWidth / 2, y - height / 2, sellWidth, height);
 
@@ -343,14 +333,6 @@
                         const level = data.footprint_level;
                         footprintData.set(level.price, level);
 
-                        // Check alert threshold
-                        const alertThreshold = parseInt(document.getElementById('alertThreshold').value) || 0;
-                        if (alertThreshold > 0 && !data.historical) {
-                            if (level.buy_qty >= alertThreshold || level.sell_qty >= alertThreshold) {
-                                playAlert();
-                            }
-                        }
-
                         // Redraw footprint if enabled
                         if (footprintEnabled) {
                             drawFootprint();
@@ -400,10 +382,6 @@
                 borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
             });
 
-            chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-                drawLines();
-            });
-
             setupFootprintCanvas();
             generateInitialData();
             updateChart();
@@ -430,32 +408,6 @@
             if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
             if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
             return num.toString();
-        }
-
-        // Play alert sound for 3 seconds
-        function playAlert() {
-            if (alertTimeout) return; // Already playing
-            
-            // Create audio context and oscillator for beep sound
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            const oscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
-            
-            oscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-            
-            oscillator.frequency.value = 800; // 800 Hz beep
-            oscillator.type = 'sine';
-            gainNode.gain.value = 0.3;
-            
-            oscillator.start();
-            
-            // Stop after 3 seconds
-            alertTimeout = setTimeout(() => {
-                oscillator.stop();
-                audioContext.close();
-                alertTimeout = null;
-            }, 3000);
         }
 
 
@@ -691,11 +643,23 @@
         document.getElementById('horizontal-line').addEventListener('click', () => {
             horizontalLineMode = !horizontalLineMode;
             document.getElementById('horizontal-line').classList.toggle('active', horizontalLineMode);
-            document.getElementById('line-canvas').classList.toggle('active', horizontalLineMode);
             if (horizontalLineMode) {
-                verticalMeasureMode = false;            }
+                verticalMeasureMode = false;
+                document.getElementById('vertical-measure').classList.remove('active');
+            }
             updateStatus(`Line Tool ${horizontalLineMode ? 'ON' : 'OFF'}`, '#26a69a');
         });
+
+        document.getElementById('vertical-measure').addEventListener('click', () => {
+            verticalMeasureMode = !verticalMeasureMode;
+            document.getElementById('vertical-measure').classList.toggle('active', verticalMeasureMode);
+            if (verticalMeasureMode) {
+                horizontalLineMode = false;
+                document.getElementById('horizontal-line').classList.remove('active');
+            }
+            updateStatus(`Measure Tool ${verticalMeasureMode ? 'ON' : 'OFF'}`, '#26a69a');
+        });
+
         document.getElementById('fullscreen').addEventListener('click', () => {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen();
@@ -714,9 +678,7 @@
                     height: window.innerHeight
                 });
                 setupFootprintCanvas();
-                setupOverlayCanvases();
                 drawFootprint();
-                drawLines();
             }
         });
 
@@ -794,7 +756,7 @@
                 isPlaying = false;
                 
                 updateStatus('Loading stored data...', '#888');
-                const response = await fetch(`/api/stored-data?symbol=${currentSymbol}&timeframe=${currentTimeframe}&days=6`);
+                const response = await fetch(`/api/stored-data?symbol=${currentSymbol}&timeframe=${currentTimeframe}&days=5`);
                 const result = await response.json();
 
                 if (result.success && result.data && result.data.length > 0) {
@@ -893,78 +855,7 @@
 
             footprintCtx = canvas.getContext('2d');
             footprintCtx.scale(dpr, dpr);
-
-            const lineCanvas = document.getElementById('line-canvas');
-            lineCanvas.width = rect.width * dpr;
-            lineCanvas.height = rect.height * dpr;
-            lineCanvas.style.width = rect.width + 'px';
-            lineCanvas.style.height = rect.height + 'px';
-
-            lineCtx = lineCanvas.getContext('2d');
-            lineCtx.scale(dpr, dpr);
-
-            lineCanvas.addEventListener('click', handleLineCanvasClick);
         }
-
-        function handleLineCanvasClick(e) {
-            const rect = e.target.getBoundingClientRect();
-            const y = e.clientY - rect.top;
-
-            if (horizontalLineMode) {
-                const price = candleSeries.coordinateToPrice(y);
-                drawnLines.push({ price: price, color: '#FFA500' });
-                selectedLineIndex = drawnLines.length - 1;
-                drawLines();
-                updateStatus(`Line added at ${price.toFixed(2)}`, '#26a69a');
-            } else {
-                selectedLineIndex = findLineAtY(y);
-                drawLines();
-            }
-        }
-
-        function findLineAtY(y) {
-            const tolerance = 5;
-            for (let i = drawnLines.length - 1; i >= 0; i--) {
-                const lineY = candleSeries.priceToCoordinate(drawnLines[i].price);
-                if (Math.abs(y - lineY) < tolerance) {
-                    return i;
-                }
-            }
-            return -1;
-        }
-
-        function drawLines() {
-            if (!lineCtx || !chart) return;
-
-            const rect = document.getElementById('chart-container').getBoundingClientRect();
-            lineCtx.clearRect(0, 0, rect.width, rect.height);
-
-            drawnLines.forEach((line, index) => {
-                const y = candleSeries.priceToCoordinate(line.price);
-                
-                lineCtx.strokeStyle = index === selectedLineIndex ? '#FFFF00' : line.color;
-                lineCtx.lineWidth = index === selectedLineIndex ? 2 : 1;
-                lineCtx.setLineDash(index === selectedLineIndex ? [5, 3] : []);
-                
-                lineCtx.beginPath();
-                lineCtx.moveTo(0, y);
-                lineCtx.lineTo(rect.width, y);
-                lineCtx.stroke();
-
-                lineCtx.fillStyle = index === selectedLineIndex ? '#FFFF00' : line.color;
-                lineCtx.font = '12px Arial';
-                lineCtx.fillText(line.price.toFixed(2), 5, y - 5);
-            });
-        }
-
-        document.addEventListener('keydown', (e) => {
-            if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLineIndex !== -1) {
-                drawnLines.splice(selectedLineIndex, 1);
-                selectedLineIndex = -1;
-                drawLines();
-                updateStatus('Line deleted', '#ef5350');
-            }
-        });
     </script>
 </body>
 

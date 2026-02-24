@@ -18,25 +18,35 @@ class UpstoxWebSocketV3:
         self.stop_event = threading.Event()
         self.subscribed_instruments = set()
         self.current_mode = "full"  # Default to full mode
+        self.session = requests.Session()  # Use session for cookies
         
     def get_authorized_url(self):
         """Get the authorized WebSocket URL"""
         url = "https://api.upstox.com/v3/feed/market-data-feed/authorize"
         headers = {
             "Authorization": f"Bearer {self.access_token}",
-            "Accept": "application/json"
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none"
         }
         
         try:
-            response = requests.get(url, headers=headers)
+            response = self.session.get(url, headers=headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 if data.get("status") == "success":
                     return data["data"]["authorized_redirect_uri"]
-            print(f"❌ Failed to get authorized URL: {response.text}")
+            elif response.status_code == 401:
+                print(f"❌ Invalid access token")
+                return None
+            print(f"❌ API Error {response.status_code}: {response.text[:200]}")
             return None
         except Exception as e:
-            print(f"❌ Error getting authorized URL: {e}")
+            print(f"❌ Connection error: {e}")
             return None
 
     def connect(self):

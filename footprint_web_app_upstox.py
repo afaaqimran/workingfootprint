@@ -282,7 +282,7 @@ class DataStorage:
         print(f"✅ Database initialized: {target_db}")
     
     def cleanup_old_data(self):
-        """Remove data older than 25 days from all DBs"""
+        """Remove data older than 180 days from all DBs"""
         for db_file in ['footprint_data_NIFTY.db', 'footprint_data_BANKNIFTY.db']:
             if not os.path.exists(db_file):
                 continue
@@ -290,8 +290,8 @@ class DataStorage:
             conn = sqlite3.connect(db_file)
             cursor = conn.cursor()
         
-            # Calculate cutoff date (25 days ago)
-            cutoff_date = datetime.now() - timedelta(days=25)
+            # Calculate cutoff date (180 days ago)
+            cutoff_date = datetime.now() - timedelta(days=180)
             cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
             
             cursor.execute('DELETE FROM candles WHERE created_at < ?', (cutoff_str,))
@@ -356,7 +356,7 @@ class DataStorage:
         except Exception as e:
             print(f"Error storing candle: {e}")
     
-    def get_stored_data(self, symbol, timeframe='1', days=25):
+    def get_stored_data(self, symbol, timeframe='1', days=180):
         """Retrieve stored data for last N days"""
         try:
             target_db = self.get_db_path(symbol)
@@ -366,61 +366,57 @@ class DataStorage:
             conn = sqlite3.connect(target_db)
             cursor = conn.cursor()
             
-            # Get candles from last N days
-            cutoff_date = datetime.now() - timedelta(days=days)
+            # Calculate cutoff date, skipping weekends
+            cutoff_date = datetime.now()
+            trading_days = 0
+            while trading_days < days:
+                cutoff_date -= timedelta(days=1)
+                if cutoff_date.weekday() < 5:  # Monday=0, Friday=4
+                    trading_days += 1
             cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
             
+            # Single JOIN query to get all data at once
             cursor.execute('''
-                SELECT timestamp, symbol, open, high, low, close, ltp, volume, volume_diff
-                FROM candles
-                WHERE symbol = ? AND timeframe = ? AND created_at >= ?
-                ORDER BY timestamp ASC
+                SELECT 
+                    c.timestamp, c.symbol, c.open, c.high, c.low, c.close, c.ltp, c.volume, c.volume_diff,
+                    f.price, f.buy_qty, f.sell_qty, f.total_qty
+                FROM candles c
+                LEFT JOIN footprint_levels f ON c.timestamp = f.candle_timestamp 
+                    AND c.symbol = f.symbol AND c.timeframe = f.timeframe
+                WHERE c.symbol = ? AND c.timeframe = ? AND c.created_at >= ?
+                ORDER BY c.timestamp ASC, f.id ASC
             ''', (symbol, timeframe, cutoff_str))
             
-            candles = cursor.fetchall()
+            rows = cursor.fetchall()
+            conn.close()
             
-            # Get footprint levels for these candles
+            # Build result
             result = []
-            for candle in candles:
-                timestamp = candle[0]
-                
-                cursor.execute('''
-                    SELECT price, buy_qty, sell_qty, total_qty
-                    FROM footprint_levels
-                    WHERE candle_timestamp = ? AND symbol = ? AND timeframe = ?
-                    ORDER BY id ASC
-                ''', (timestamp, symbol, timeframe))
-                
-                footprint_levels = cursor.fetchall()
-                
+            for row in rows:
                 candle_data = {
-                    'timestamp': timestamp,
-                    'symbol': candle[1],
-                    'open': candle[2],
-                    'high': candle[3],
-                    'low': candle[4],
-                    'close': candle[5],
-                    'ltp': candle[6],
-                    'volume': candle[7],
-                    'volume_diff': candle[8],
+                    'timestamp': row[0],
+                    'symbol': row[1],
+                    'open': row[2],
+                    'high': row[3],
+                    'low': row[4],
+                    'close': row[5],
+                    'ltp': row[6],
+                    'volume': row[7],
+                    'volume_diff': row[8],
                     'historical': True
                 }
                 
-                # Add footprint levels if they exist
-                if footprint_levels:
-                    for fp_level in footprint_levels:
-                        level_data = candle_data.copy()
-                        level_data['footprint_level'] = {
-                            'price': fp_level[0],
-                            'buy_qty': fp_level[1],
-                            'sell_qty': fp_level[2],
-                            'total_qty': fp_level[3]
-                        }
-                        result.append(level_data)
-                else:
-                    result.append(candle_data)
+                # Add footprint level if exists
+                if row[9] is not None:
+                    candle_data['footprint_level'] = {
+                        'price': row[9],
+                        'buy_qty': row[10],
+                        'sell_qty': row[11],
+                        'total_qty': row[12]
+                    }
+                
+                result.append(candle_data)
             
-            conn.close()
             return result
             
         except Exception as e:
@@ -496,7 +492,7 @@ class UpstoxAPI:
     def start_data_polling(self, user_id, timeframe='3'):
         """Start WebSocket connection instead of polling"""
         self.user_id = user_id
-        self.current_timeframe = '1' # FORCE 1-Minute Aggregation for storage
+        self.current_timeframe = timeframe
         
         if self.ws_client:
             self.ws_client.disconnect()
@@ -620,10 +616,10 @@ class UpstoxAPI:
                         update = base_update.copy()
                         update['footprint_level'] = level
                         socketio.emit('ohlc_data', update, room=self.user_id)
-                        data_storage.store_candle(update, self.current_timeframe)
+                        data_storage.store_candle(update, '1')  # Always store as 1-min
                 else:
                     socketio.emit('ohlc_data', base_update, room=self.user_id)
-                    data_storage.store_candle(base_update, self.current_timeframe)
+                    data_storage.store_candle(base_update, '1')  # Always store as 1-min
                 
                 # Update previous values
                 self.prev_ltp = ltp
@@ -712,14 +708,14 @@ def get_live_data():
 
 @app.route('/api/stored-data')
 def get_stored_data():
-    """Retrieve stored data from database for last 25 days"""
+    """Retrieve stored data from database for last 180 days"""
     if 'user_id' not in session or session['user_id'] not in authenticated_users:
         return jsonify({'success': False}), 401
 
     # Get query parameters
     symbol = request.args.get('symbol', 'NIFTY_DEC')
     timeframe = request.args.get('timeframe', '1')
-    days = int(request.args.get('days', 25))
+    days = int(request.args.get('days', 180))
     
     try:
         # 1. Always fetch 1-minute data from DB
@@ -818,8 +814,10 @@ def change_timeframe():
     upstox = authenticated_users[user_id]
     
     try:
-        # Reset volume tracking for new timeframe
+        # Update timeframe and reset tracking
+        upstox.current_timeframe = timeframe
         upstox.prev_volume = 0
+        upstox.current_minute_candle = None
         
         return jsonify({'success': True, 'message': f'Switched to {timeframe}min timeframe'})
     except Exception as e:
