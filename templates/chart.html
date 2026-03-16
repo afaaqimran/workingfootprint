@@ -137,6 +137,118 @@
             font-size: 12px;
             cursor: pointer;
         }
+
+        /* Tab navigation */
+        .tab-nav {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            background: rgba(19, 23, 34, 0.97);
+            border-top: 1px solid #2B2B43;
+            z-index: 1000;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 8px;
+            background: transparent;
+            color: #888;
+            border: none;
+            font-size: 12px;
+            cursor: pointer;
+            border-top: 2px solid transparent;
+        }
+        .tab-btn.active {
+            color: #26a69a;
+            border-top-color: #26a69a;
+        }
+
+        /* Options panel */
+        #options-panel {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 32px;
+            background: #131722;
+            overflow-y: auto;
+            z-index: 999;
+            padding: 8px;
+            padding-top: 60px;
+        }
+        #options-panel.visible { display: block; }
+
+        .options-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #888;
+        }
+        .options-header span { color: #d1d4dc; font-weight: 600; }
+
+        .options-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .options-table th {
+            background: #1e2130;
+            color: #888;
+            padding: 8px 10px;
+            text-align: right;
+            border-bottom: 1px solid #2B2B43;
+            white-space: nowrap;
+        }
+        .options-table th:first-child,
+        .options-table th:nth-child(2),
+        .options-table th:nth-child(3) { text-align: left; }
+
+        .options-table td {
+            padding: 7px 10px;
+            text-align: right;
+            border-bottom: 1px solid #1e2130;
+            color: #d1d4dc;
+        }
+        .options-table td:first-child,
+        .options-table td:nth-child(2),
+        .options-table td:nth-child(3) { text-align: left; }
+
+        .options-table tr:hover td { background: #1a1f2e; }
+        .options-table tr.atm-row td { background: rgba(38, 166, 154, 0.08); }
+        .options-table tr.atm-row td:nth-child(2) { color: #26a69a; font-weight: 600; }
+
+        .badge-ce { color: #26a69a; font-weight: 600; }
+        .badge-pe { color: #ef5350; font-weight: 600; }
+
+        .diff-pos { color: #26a69a; }
+        .diff-neg { color: #ef5350; }
+        .diff-zero { color: #888; }
+
+        .section-divider td {
+            background: #1a1f2e;
+            color: #555;
+            font-size: 11px;
+            padding: 4px 10px;
+            text-align: center;
+            letter-spacing: 1px;
+        }
+
+        .trigger-badge {
+            display: inline-block;
+            background: #1a3a5c;
+            color: #4fc3f7;
+            border: 1px solid #4fc3f7;
+            border-radius: 3px;
+            padding: 2px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
     </style>
 </head>
 
@@ -182,6 +294,41 @@
             <canvas id="trade-canvas"></canvas>
             <canvas id="line-canvas"></canvas>
         </div>
+    </div>
+
+    <!-- Options Chain Panel -->
+    <div id="options-panel">
+        <div class="options-header">
+            <div>NIFTY Options &nbsp;|&nbsp; Expiry: <span id="opt-expiry">—</span> &nbsp;|&nbsp; NIFTY Spot: <span id="opt-nifty-ltp">—</span> &nbsp;|&nbsp; ATM: <span id="opt-atm">—</span></div>
+            <button class="btn" onclick="loadOptionsChain()" style="margin-left:auto;padding:4px 10px;font-size:11px;">↻ Refresh</button>
+            <span id="opt-last-update" style="color:#555;font-size:11px;"></span>
+        </div>
+        <table class="options-table">
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Strike</th>
+                    <th>Label</th>
+                    <th>ATP</th>
+                    <th>LTP</th>
+                    <th>ATP - LTP</th>
+                    <th>Open</th>
+                    <th>High</th>
+                    <th>Low</th>
+                    <th>Volume</th>
+                    <th>T1 [ATP-LTP ITM &lt; ATM]</th>
+                </tr>
+            </thead>
+            <tbody id="options-tbody">
+                <tr><td colspan="10" style="text-align:center;color:#555;padding:20px;">Click the Options tab to load data</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="tab-nav">
+        <button class="tab-btn active" id="tab-chart" onclick="switchTab('chart')">📈 Chart</button>
+        <button class="tab-btn" id="tab-options" onclick="switchTab('options')">⚡ Options Chain</button>
     </div>
 
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -311,29 +458,38 @@
 
         // Initialize WebSocket connection
         function initWebSocket() {
-            socket = io();
+            socket = io({
+                reconnection: true,
+                reconnectionAttempts: Infinity,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 5000,
+                timeout: 20000
+            });
 
             socket.on('connect', () => {
                 console.log('WebSocket connected');
                 updateStatus('Live Data Connected', '#26a69a');
                 document.getElementById('connection-status').textContent = 'Live';
-                isPlaying = true; // Auto-start live data
+                isPlaying = true;
                 updatePlayButton();
-                
-                // Don't load historical data here - it's already loaded on page init
             });
 
-            socket.on('disconnect', () => {
-                console.log('WebSocket disconnected');
-                updateStatus('WebSocket Disconnected', '#ef5350');
-                document.getElementById('connection-status').textContent = 'Disconnected';
+            socket.on('disconnect', (reason) => {
+                console.log('WebSocket disconnected:', reason);
+                updateStatus('WebSocket Disconnected — Reconnecting...', '#ef5350');
+                document.getElementById('connection-status').textContent = 'Reconnecting...';
                 isPlaying = false;
                 updatePlayButton();
             });
 
-            socket.on('ohlc_data', (data) => {
-                console.log('Received OHLC data:', data);
+            socket.on('reconnect', () => {
+                console.log('WebSocket reconnected');
+                updateStatus('Reconnected', '#26a69a');
+                isPlaying = true;
+                updatePlayButton();
+            });
 
+            socket.on('ohlc_data', (data) => {
                 // Always process historical data, only check isPlaying for live data
                 if (data.historical || isPlaying) {
                     updateWithOHLC(data);
@@ -515,8 +671,6 @@
                 currentTime = Math.floor(Date.now() / 1000) + 19800;
             }
 
-            console.log('Processing candle with timestamp:', currentTime, 'Date:', new Date((currentTime - 19800) * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }));
-
             // Always create new candles for different timestamps
             const existingCandleIndex = liveData.findIndex(candle => candle.time === currentTime);
 
@@ -549,7 +703,19 @@
 
                 liveData[existingCandleIndex] = updatedCandle;
                 lastPrice = updatedCandle.close;
-                console.log('Updated existing candle at IST', new Date(currentTime * 1000));
+
+                // Use update() for live candle — much faster than setData for single candle updates
+                if (!ohlcData.historical) {
+                    candleSeries.update({
+                        time:  updatedCandle.time,
+                        open:  updatedCandle.open,
+                        high:  updatedCandle.high,
+                        low:   updatedCandle.low,
+                        close: updatedCandle.close
+                    });
+                    if (footprintEnabled) drawFootprint();
+                    return;
+                }
             } else {
                 // Create new candle
                 const newCandle = {
@@ -573,7 +739,19 @@
 
                 liveData.push(newCandle);
                 lastPrice = newCandle.close;
-                console.log('Created new candle at IST', new Date(currentTime * 1000), 'Total candles:', liveData.length);
+
+                // New candle — use update() to append it live
+                if (!ohlcData.historical) {
+                    candleSeries.update({
+                        time:  newCandle.time,
+                        open:  newCandle.open,
+                        high:  newCandle.high,
+                        low:   newCandle.low,
+                        close: newCandle.close
+                    });
+                    if (footprintEnabled) drawFootprint();
+                    return;
+                }
             }
 
             // Sort by timestamp to maintain chronological order
@@ -965,6 +1143,119 @@
                 updateStatus('Line deleted', '#ef5350');
             }
         });
+
+        // ── Options Chain ──────────────────────────────────────────────
+        let optionsRefreshTimer = null;
+        let activeTab = 'chart';
+
+        function switchTab(tab) {
+            activeTab = tab;
+            document.getElementById('tab-chart').classList.toggle('active', tab === 'chart');
+            document.getElementById('tab-options').classList.toggle('active', tab === 'options');
+            document.getElementById('options-panel').classList.toggle('visible', tab === 'options');
+
+            if (tab === 'options') {
+                loadOptionsChain();
+                // Refresh every 2s — data comes from WebSocket cache, so this is just a display poll
+                optionsRefreshTimer = setInterval(() => {
+                    if (activeTab === 'options') loadOptionsChain();
+                }, 2000);
+            } else {
+                clearInterval(optionsRefreshTimer);
+            }
+        }
+
+        async function loadOptionsChain() {
+            try {
+                const resp = await fetch('/api/options-chain');
+                const result = await resp.json();
+
+                if (!result.success) {
+                    document.getElementById('options-tbody').innerHTML =
+                        `<tr><td colspan="10" style="text-align:center;color:#ef5350;padding:20px;">${result.message || 'Failed to load'}</td></tr>`;
+                    return;
+                }
+
+                document.getElementById('opt-expiry').textContent = result.expiry || '—';
+                document.getElementById('opt-nifty-ltp').textContent = result.nifty_ltp ? result.nifty_ltp.toFixed(2) : '—';
+                document.getElementById('opt-atm').textContent = result.atm_strike || '—';
+                document.getElementById('opt-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+                const rows = result.data || [];
+                const ceRows = rows.filter(r => r.type === 'CE');
+                const peRows = rows.filter(r => r.type === 'PE');
+
+                // ATM diff per type — used for Trigger1 comparison
+                const atmCE = ceRows.find(r => r.label === 'ATM');
+                const atmPE = peRows.find(r => r.label === 'ATM');
+                const atmDiff = {
+                    CE: atmCE ? atmCE.atp_minus_ltp : null,
+                    PE: atmPE ? atmPE.atp_minus_ltp : null,
+                };
+
+                let html = '';
+
+                html += `<tr class="section-divider"><td colspan="10">── CALL OPTIONS (CE) ──</td></tr>`;
+                ceRows.forEach(row => {
+                    html += buildRow(row, result.atm_strike, atmDiff);
+                });
+
+                html += `<tr class="section-divider"><td colspan="10">── PUT OPTIONS (PE) ──</td></tr>`;
+                peRows.forEach(row => {
+                    html += buildRow(row, result.atm_strike, atmDiff);
+                });
+
+                document.getElementById('options-tbody').innerHTML = html;
+
+            } catch (e) {
+                document.getElementById('options-tbody').innerHTML =
+                    `<tr><td colspan="10" style="text-align:center;color:#ef5350;padding:20px;">Error: ${e.message}</td></tr>`;
+            }
+        }
+
+        function buildRow(row, atmStrike, atmDiff) {
+            const isAtm = row.strike === atmStrike;
+            const typeClass = row.type === 'CE' ? 'badge-ce' : 'badge-pe';
+            const fmt = v => (v != null && v !== 0) ? v.toFixed(2) : '—';
+            const fmtVol = v => {
+                if (!v) return '—';
+                if (v >= 10000000) return (v / 10000000).toFixed(2) + ' Cr';
+                if (v >= 100000)   return (v / 100000).toFixed(2) + ' L';
+                if (v >= 1000)     return (v / 1000).toFixed(1) + 'K';
+                return v.toString();
+            };
+
+            let diffHtml = '—';
+            if (row.atp_minus_ltp != null) {
+                const cls = row.atp_minus_ltp > 0 ? 'diff-pos' : row.atp_minus_ltp < 0 ? 'diff-neg' : 'diff-zero';
+                const sign = row.atp_minus_ltp > 0 ? '+' : '';
+                diffHtml = `<span class="${cls}">${sign}${row.atp_minus_ltp.toFixed(2)}</span>`;
+            }
+
+            // Trigger1: ltp < atp AND |atp-ltp| of this row < |atp-ltp| of ATM row (same type)
+            const atm_diff_val = atmDiff ? atmDiff[row.type] : null;
+            const priceBelowAtp = row.ltp > 0 && row.atp > 0 && row.ltp < row.atp;
+            const itmDiffLessThanAtm = row.atp_minus_ltp != null && atm_diff_val != null
+                                       && Math.abs(row.atp_minus_ltp) < Math.abs(atm_diff_val);
+            const trigger1 = priceBelowAtp && itmDiffLessThanAtm;
+            const trigger1Html = trigger1
+                ? `<span class="trigger-badge">Trigger 1</span>`
+                : '';
+
+            return `<tr class="${isAtm ? 'atm-row' : ''}">
+                <td><span class="${typeClass}">${row.type}</span></td>
+                <td>${row.strike}</td>
+                <td>${row.label}</td>
+                <td>${fmt(row.atp)}</td>
+                <td>${fmt(row.ltp)}</td>
+                <td>${diffHtml}</td>
+                <td>${fmt(row.open)}</td>
+                <td>${fmt(row.high)}</td>
+                <td>${fmt(row.low)}</td>
+                <td>${fmtVol(row.volume)}</td>
+                <td>${trigger1Html}</td>
+            </tr>`;
+        }
     </script>
 </body>
 

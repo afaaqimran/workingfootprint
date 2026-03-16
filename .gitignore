@@ -4,3 +4,4 @@ instruments_cache.json
 *.pyc
 .DS_Store
 footprint_web_app_upstox.py.backup.*
+.env

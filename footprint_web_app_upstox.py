@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 import requests
 import json
@@ -425,7 +428,7 @@ class DataStorage:
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this'
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, ping_interval=25, async_mode='eventlet')
 
 # Global variables
 authenticated_users = {}
@@ -448,9 +451,13 @@ class UpstoxAPI:
         self.prev_close = 0
         self.prev_category = 'buy'
         self.current_minute_candle = None  # Local aggregation cache
-        
-        # WebSocket Client
-        
+
+        # Options real-time cache: instrument_key -> {ltp, atp, open, high, low, cp}
+        self.options_cache = {}
+        self.options_instrument_keys = set()  # currently subscribed option keys
+        self.options_meta = []  # [{strike, type, label, instrument_key}, ...]
+        self.nifty_spot_ltp = 0  # NIFTY 50 index spot price for ATM calculation
+
         # WebSocket Client
         self.ws_client = None
         
@@ -505,10 +512,115 @@ class UpstoxAPI:
         )
         self.ws_client.connect()
         
-        # Wait for connection then subscribe
+        # Wait for connection then subscribe futures instrument
         time.sleep(1)
         self.ws_client.subscribe({self.instrument_token}, mode="full")
+        # Also subscribe NIFTY 50 spot index for accurate ATM strike calculation
+        self.ws_client.subscribe({'NSE_INDEX|Nifty 50'}, mode="ltpc")
         print("📡 Started Upstox WebSocket V3")
+
+        # Subscribe NIFTY options strikes in background
+        threading.Thread(target=self.subscribe_options_strikes, daemon=True).start()
+
+    def subscribe_options_strikes(self, nifty_ltp=None):
+        """
+        Resolve ATM/ITM NIFTY option strikes and subscribe them on the existing WebSocket.
+        Uses full mode so we get LTP, ATP, OHLC in every tick.
+        Called once after login and again whenever the futures instrument changes.
+        """
+        try:
+            # Wait up to 5s for NIFTY spot to arrive before calculating ATM
+            if not nifty_ltp:
+                for _ in range(10):
+                    if self.nifty_spot_ltp > 0:
+                        break
+                    time.sleep(0.5)
+                if self.nifty_spot_ltp == 0:
+                    print("⚠️ NIFTY spot not yet available, falling back to futures LTP")
+            if not instrument_manager.instruments:
+                instrument_manager.load_cached_instruments()
+
+            today = datetime.now().date()
+            strike_step = 50
+
+            # Determine ATM from NIFTY spot LTP, fallback to futures LTP, then median strike
+            atm_ltp = nifty_ltp or self.nifty_spot_ltp or self.prev_ltp
+            options = [
+                inst for inst in instrument_manager.instruments
+                if inst.get('segment') == 'NSE_FO'
+                and inst.get('instrument_type') in ('CE', 'PE')
+                and inst.get('name') == 'NIFTY'
+            ]
+
+            valid_options = []
+            for opt in options:
+                try:
+                    expiry_val = opt.get('expiry')
+                    if expiry_val:
+                        expiry_date = (datetime.fromtimestamp(expiry_val / 1000).date()
+                                       if isinstance(expiry_val, (int, float))
+                                       else datetime.strptime(str(expiry_val), '%Y-%m-%d').date())
+                        if expiry_date >= today:
+                            opt['expiry_date'] = expiry_date
+                            valid_options.append(opt)
+                except Exception:
+                    continue
+
+            if not valid_options:
+                print("⚠️ No valid NIFTY options found for subscription")
+                return
+
+            nearest_expiry = min(o['expiry_date'] for o in valid_options)
+            expiry_options = [o for o in valid_options if o['expiry_date'] == nearest_expiry]
+
+            if atm_ltp > 0:
+                atm_strike = round(atm_ltp / strike_step) * strike_step
+            else:
+                strikes = sorted(set(float(o.get('strike_price', 0)) for o in expiry_options if o.get('strike_price')))
+                atm_strike = strikes[len(strikes) // 2] if strikes else 24000
+
+            # 2 ATM + 5 ITM for each side (7 CE + 7 PE = 14 instruments)
+            ce_strikes = [atm_strike - i * strike_step for i in range(7)]
+            pe_strikes = [atm_strike + i * strike_step for i in range(7)]
+
+            opt_lookup = {}
+            for opt in expiry_options:
+                key = (float(opt.get('strike_price', 0)), opt.get('instrument_type'))
+                opt_lookup[key] = opt.get('instrument_key')
+
+            new_meta = []
+            new_keys = set()
+
+            for strike in ce_strikes:
+                ikey = opt_lookup.get((float(strike), 'CE'))
+                label = 'ATM' if strike == atm_strike else f'ATM-{int(atm_strike - strike)}'
+                new_meta.append({'strike': strike, 'type': 'CE', 'label': label,
+                                  'instrument_key': ikey, 'expiry': nearest_expiry.strftime('%d %b %Y')})
+                if ikey:
+                    new_keys.add(ikey)
+
+            for strike in pe_strikes:
+                ikey = opt_lookup.get((float(strike), 'PE'))
+                label = 'ATM' if strike == atm_strike else f'ATM+{int(strike - atm_strike)}'
+                new_meta.append({'strike': strike, 'type': 'PE', 'label': label,
+                                  'instrument_key': ikey, 'expiry': nearest_expiry.strftime('%d %b %Y')})
+                if ikey:
+                    new_keys.add(ikey)
+
+            # Unsubscribe old option keys if they changed
+            if self.options_instrument_keys and self.options_instrument_keys != new_keys:
+                if self.ws_client:
+                    self.ws_client.unsubscribe(self.options_instrument_keys)
+
+            self.options_meta = new_meta
+            self.options_instrument_keys = new_keys
+
+            if new_keys and self.ws_client:
+                self.ws_client.subscribe(new_keys, mode="full")
+                print(f"📡 Subscribed {len(new_keys)} NIFTY option strikes (ATM={atm_strike}, expiry={nearest_expiry})")
+
+        except Exception as e:
+            print(f"❌ Error subscribing options strikes: {e}")
 
     def process_websocket_data(self, data):
         """Process incoming WebSocket data"""
@@ -517,6 +629,35 @@ class UpstoxAPI:
             current_ts = int(data.get('currentTs', time.time() * 1000))
             
             for instrument_key, feed_data in feeds.items():
+                # ── NIFTY spot index LTP ─────────────────────────────
+                if instrument_key == 'NSE_INDEX|Nifty 50':
+                    ltpc = feed_data.get('ltpc') \
+                           or (feed_data.get('fullFeed') or {}).get('indexFF', {}).get('ltpc', {})
+                    ltp_val = ltpc.get('ltp', 0) if ltpc else 0
+                    if ltp_val:
+                        self.nifty_spot_ltp = ltp_val
+                    continue
+
+                # ── Options cache update ──────────────────────────────
+                if instrument_key in self.options_instrument_keys:
+                    full = (feed_data.get('fullFeed') or feed_data.get('ff') or {}).get('marketFF', {})
+                    if full:
+                        ltpc = full.get('ltpc', {})
+                        ohlc_list = full.get('marketOHLC', {}).get('ohlc', [])
+                        # Pick the 1-day OHLC entry
+                        day_ohlc = next((o for o in ohlc_list if o.get('interval') == '1d'), {})
+                        self.options_cache[instrument_key] = {
+                            'ltp':    ltpc.get('ltp', 0),
+                            'cp':     ltpc.get('cp', 0),
+                            'atp':    float(full.get('atp', 0) or 0),
+                            'volume': int(full.get('vtt', 0) or 0),
+                            'open':   day_ohlc.get('open', 0),
+                            'high':   day_ohlc.get('high', 0),
+                            'low':    day_ohlc.get('low', 0),
+                            'ts':     current_ts,
+                        }
+                    continue  # don't process options as futures candles
+
                 if instrument_key != self.instrument_token:
                     continue
                     
@@ -798,7 +939,10 @@ def change_instrument():
         # Subscribe to new instrument
         if upstox.ws_client:
             upstox.ws_client.subscribe({instrument_token}, mode="full")
-        
+
+        # Re-subscribe options strikes for new instrument context
+        threading.Thread(target=upstox.subscribe_options_strikes, daemon=True).start()
+
         return jsonify({'success': True, 'message': f'Switched to {symbol}'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
@@ -823,12 +967,71 @@ def change_timeframe():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
 
+@app.route('/api/options-chain')
+def get_options_chain():
+    """Return NIFTY ATM/ITM options data from the live WebSocket cache"""
+    if 'user_id' not in session or session['user_id'] not in authenticated_users:
+        return jsonify({'success': False}), 401
+
+    user_id = session['user_id']
+    upstox = authenticated_users[user_id]
+
+    try:
+        if not upstox.options_meta:
+            # Trigger subscription if not yet done (e.g. first open before first tick)
+            threading.Thread(target=upstox.subscribe_options_strikes, daemon=True).start()
+            return jsonify({'success': False, 'message': 'Options data loading — please retry in a few seconds'})
+
+        result_rows = []
+        atm_strike = None
+
+        for meta in upstox.options_meta:
+            if meta['label'] == 'ATM' and atm_strike is None:
+                atm_strike = meta['strike']
+
+            ikey = meta.get('instrument_key')
+            cached = upstox.options_cache.get(ikey, {}) if ikey else {}
+
+            ltp  = cached.get('ltp', 0)
+            atp  = cached.get('atp', 0)
+            diff = round(atp - ltp, 2) if (atp and ltp) else None
+
+            result_rows.append({
+                'strike':        meta['strike'],
+                'type':          meta['type'],
+                'label':         meta['label'],
+                'ltp':           ltp,
+                'atp':           atp,
+                'atp_minus_ltp': diff,
+                'open':          cached.get('open', 0),
+                'high':          cached.get('high', 0),
+                'low':           cached.get('low', 0),
+                'volume':        cached.get('volume', 0),
+            })
+
+        expiry = upstox.options_meta[0].get('expiry', '—') if upstox.options_meta else '—'
+
+        return jsonify({
+            'success':    True,
+            'atm_strike': atm_strike,
+            'nifty_ltp':  upstox.nifty_spot_ltp or upstox.prev_ltp,
+            'expiry':     expiry,
+            'data':       result_rows
+        })
+
+    except Exception as e:
+        print(f"❌ Error in options-chain: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @app.route('/logout')
 def logout():
     if 'user_id' in session:
         user_id = session['user_id']
         if user_id in authenticated_users:
             upstox = authenticated_users[user_id]
+            if upstox.ws_client:
+                upstox.ws_client.disconnect()
             upstox.logged_in = False
             del authenticated_users[user_id]
         if user_id in live_data:
@@ -837,4 +1040,4 @@ def logout():
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5001, allow_unsafe_werkzeug=True)
+    socketio.run(app, debug=False, host='0.0.0.0', port=5001)
