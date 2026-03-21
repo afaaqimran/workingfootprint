@@ -98,7 +98,7 @@
         #chart-container {
             position: relative;
             width: 100vw;
-            height: 100vh;
+            height: calc(100vh - 36px);
         }
 
         #overlay-container {
@@ -525,7 +525,7 @@
             const container = document.getElementById('chart-container');
             chart = LightweightCharts.createChart(container, {
                 width: window.innerWidth,
-                height: window.innerHeight,
+                height: window.innerHeight - 36,
                 layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc' },
                 grid: { vertLines: { visible: false }, horzLines: { visible: false } },
                 rightPriceScale: { borderColor: '#2B2B43', autoScale: true },
@@ -539,11 +539,12 @@
                 },
                 localization: {
                     timeFormatter: (time) => {
-                        // Subtract IST offset since we added it to timestamps
                         const utcTime = time - 19800;
                         const date = new Date(utcTime * 1000);
-                        return date.toLocaleTimeString('en-IN', {
+                        return date.toLocaleString('en-IN', {
                             timeZone: 'Asia/Kolkata',
+                            day: '2-digit',
+                            month: 'short',
                             hour: '2-digit',
                             minute: '2-digit'
                         });

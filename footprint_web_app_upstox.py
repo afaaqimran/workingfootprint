@@ -430,6 +430,9 @@ app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this'
 socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, ping_interval=25, async_mode='eventlet')
 
+# Analytics token (1-year validity, read-only, no OAuth redirect needed)
+ANALYTICS_TOKEN = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiJBVjYwMDEiLCJqdGkiOiI2OWJlNzhiZTg3YTgwYjEzMWJkZTg0MWMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlzRXh0ZW5kZWQiOnRydWUsImlhdCI6MTc3NDA5MDQzMCwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxODA1NjY2NDAwfQ.edEAi8hh4gU63ceOAK_Kqfww786nI0zO8LP-7kLm9pQ"
+
 # Global variables
 authenticated_users = {}
 live_data = {}
@@ -481,18 +484,18 @@ class UpstoxAPI:
         if not hasattr(self, 'current_symbol'):
             self.current_symbol = 'NIFTY_DEC'  # Fallback only if init failed
         
-    def login(self, api_key, api_secret, access_token):
+    def login(self, api_key=None, api_secret=None, access_token=None):
         try:
-            self.access_token = access_token
-            # Verify token
-            headers = {'Authorization': f'Bearer {access_token}', 'Accept': 'application/json'}
-            response = requests.get(f"{self.base_url}/v2/user/profile", headers=headers)
-            
+            # Use analytics token (long-lived, no OAuth redirect needed)
+            self.access_token = ANALYTICS_TOKEN
+            # Verify token works against market data feed authorize endpoint
+            headers = {'Authorization': f'Bearer {self.access_token}', 'Accept': 'application/json'}
+            response = requests.get(f"{self.base_url}/v3/feed/market-data-feed/authorize", headers=headers)
             if response.status_code == 200:
                 self.logged_in = True
                 return {'success': True, 'message': 'Login successful'}
             else:
-                return {'success': False, 'message': 'Invalid access token'}
+                return {'success': False, 'message': f'Token verification failed: {response.status_code}'}
         except Exception as e:
             return {'success': False, 'message': str(e)}
 
@@ -784,25 +787,16 @@ def index():
 
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.json
-    
     upstox = UpstoxAPI()
-    result = upstox.login(
-        api_key=data.get('api_key'),
-        api_secret=data.get('api_secret'),
-        access_token=data.get('access_token')
-    )
-    
+    result = upstox.login()
+
     if result['success']:
-        user_id = data.get('api_key')  # Use API key as user ID
+        user_id = 'analytics_user'
         session['user_id'] = user_id
         authenticated_users[user_id] = upstox
-        
-        # Start data polling for live data (default 3-minute)
         upstox.start_data_polling(user_id, '3')
-        
         return jsonify(result)
-    
+
     return jsonify(result), 401
 
 @app.route('/api/current-user')
@@ -1030,8 +1024,13 @@ def logout():
         user_id = session['user_id']
         if user_id in authenticated_users:
             upstox = authenticated_users[user_id]
-            if upstox.ws_client:
-                upstox.ws_client.disconnect()
+            try:
+                if upstox.ws_client:
+                    upstox.ws_client.stop_event.set()
+                    if upstox.ws_client.ws:
+                        upstox.ws_client.ws.close()
+            except Exception:
+                pass
             upstox.logged_in = False
             del authenticated_users[user_id]
         if user_id in live_data:
