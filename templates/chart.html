@@ -325,14 +325,60 @@
         </table>
     </div>
 
+    <!-- Straddle Panel -->
+    <div id="straddle-panel" style="display:none;position:fixed;top:0;left:0;right:0;bottom:36px;background:#131722;overflow:hidden;z-index:999;padding:8px;padding-top:60px;box-sizing:border-box;flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;flex-shrink:0;">
+            <span style="color:#8b949e;font-size:12px;">NIFTY Spot: <strong id="st-spot" style="color:#e6edf3;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">ATM: <strong id="st-atm" style="color:#26a69a;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">Expiry: <span id="st-expiry">—</span></span>
+            <span style="color:#8b949e;font-size:12px;">Lowest: <strong id="st-lowest" style="color:#f0b429;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">Day Low: <span id="st-day-low" style="color:#26a69a;">—</span> &nbsp; Day High: <span id="st-day-high" style="color:#ef5350;">—</span></span>
+            <button class="btn" onclick="loadStraddle()" style="margin-left:auto;padding:4px 10px;font-size:11px;">↻ Refresh</button>
+            <span id="st-last-update" style="color:#555;font-size:11px;"></span>
+        </div>
+
+        <!-- Premium spike alert bar -->
+        <div id="st-alert-bar" style="display:none;background:rgba(240,180,41,0.15);border:1px solid rgba(240,180,41,0.4);border-radius:6px;padding:6px 12px;margin-bottom:8px;color:#f0b429;font-size:12px;flex-shrink:0;"></div>
+
+        <div style="display:flex;gap:8px;flex:1;min-height:0;">
+            <!-- Straddle table -->
+            <div style="flex:0 0 260px;background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden;display:flex;flex-direction:column;">
+                <div style="padding:8px 12px;border-bottom:1px solid #21262d;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
+                    <span style="font-size:11px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:0.8px;">Strike</span>
+                    <span style="font-size:11px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:0.8px;">CE + PE = Straddle</span>
+                </div>
+                <div style="overflow-y:auto;flex:1;">
+                    <table style="width:100%;border-collapse:collapse;" id="st-table">
+                        <tbody id="st-tbody">
+                            <tr><td colspan="4" style="text-align:center;color:#555;padding:20px;font-size:12px;">Click Straddle tab to load</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Premium chart -->
+            <div style="flex:1;min-width:280px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px;display:flex;flex-direction:column;">
+                <div style="font-size:11px;color:#8b949e;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
+                <span>ATM Straddle Premium — Live</span>
+                <button onclick="if(straddleChart){ straddleZoomed=false; straddleChart.resetZoom(); straddleChart.update('none'); }" style="padding:2px 8px;font-size:10px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:4px;cursor:pointer;">Reset Zoom</button>
+            </div>
+                <canvas id="st-chart" style="width:100%;flex:1;min-height:0;"></canvas>
+            </div>
+        </div>
+    </div>
+
     <!-- Tab Navigation -->
     <div class="tab-nav">
         <button class="tab-btn active" id="tab-chart" onclick="switchTab('chart')">📈 Chart</button>
         <button class="tab-btn" id="tab-options" onclick="switchTab('options')">⚡ Options Chain</button>
+        <button class="tab-btn" id="tab-straddle" onclick="switchTab('straddle')">🎯 Straddle</button>
     </div>
 
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <script>
         let chart, candleSeries;
         let currentSymbol = 'NIFTY_DEC', currentTimeframe = '3';
@@ -1020,6 +1066,9 @@
             initWebSocket();
             setupOverlayCanvases();
 
+            // Start options chain + straddle polling in background
+            startBackgroundPolling();
+
             // Setup footprint toggle
             document.getElementById('footprint').addEventListener('click', toggleFootprint);
 
@@ -1147,23 +1196,27 @@
 
         // ── Options Chain ──────────────────────────────────────────────
         let optionsRefreshTimer = null;
+        let straddleRefreshTimer = null;
         let activeTab = 'chart';
+
+        function startBackgroundPolling() {
+            if (!optionsRefreshTimer) {
+                loadOptionsChain();
+                optionsRefreshTimer = setInterval(loadOptionsChain, 2000);
+            }
+            if (!straddleRefreshTimer) {
+                loadStraddle();
+                straddleRefreshTimer = setInterval(loadStraddle, 2000);
+            }
+        }
 
         function switchTab(tab) {
             activeTab = tab;
             document.getElementById('tab-chart').classList.toggle('active', tab === 'chart');
             document.getElementById('tab-options').classList.toggle('active', tab === 'options');
+            document.getElementById('tab-straddle').classList.toggle('active', tab === 'straddle');
             document.getElementById('options-panel').classList.toggle('visible', tab === 'options');
-
-            if (tab === 'options') {
-                loadOptionsChain();
-                // Refresh every 2s — data comes from WebSocket cache, so this is just a display poll
-                optionsRefreshTimer = setInterval(() => {
-                    if (activeTab === 'options') loadOptionsChain();
-                }, 2000);
-            } else {
-                clearInterval(optionsRefreshTimer);
-            }
+            document.getElementById('straddle-panel').style.display = (tab === 'straddle') ? 'flex' : 'none';
         }
 
         async function loadOptionsChain() {
@@ -1182,7 +1235,10 @@
                 document.getElementById('opt-atm').textContent = result.atm_strike || '—';
                 document.getElementById('opt-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
 
-                const rows = result.data || [];
+                const rows = (result.data || []).filter(r =>
+                    (r.type === 'CE' && r.strike <= result.atm_strike) ||
+                    (r.type === 'PE' && r.strike >= result.atm_strike)
+                );
                 const ceRows = rows.filter(r => r.type === 'CE');
                 const peRows = rows.filter(r => r.type === 'PE');
 
@@ -1233,12 +1289,13 @@
                 diffHtml = `<span class="${cls}">${sign}${row.atp_minus_ltp.toFixed(2)}</span>`;
             }
 
-            // Trigger1: ltp < atp AND |atp-ltp| of this row < |atp-ltp| of ATM row (same type)
+            // Trigger1: ITM only, ltp < atp AND |atp-ltp| of this row < |atp-ltp| of ATM row (same type)
+            const isItm = (row.type === 'CE' && row.strike < atmStrike) || (row.type === 'PE' && row.strike > atmStrike);
             const atm_diff_val = atmDiff ? atmDiff[row.type] : null;
             const priceBelowAtp = row.ltp > 0 && row.atp > 0 && row.ltp < row.atp;
             const itmDiffLessThanAtm = row.atp_minus_ltp != null && atm_diff_val != null
                                        && Math.abs(row.atp_minus_ltp) < Math.abs(atm_diff_val);
-            const trigger1 = priceBelowAtp && itmDiffLessThanAtm;
+            const trigger1 = isItm && priceBelowAtp && itmDiffLessThanAtm;
             const trigger1Html = trigger1
                 ? `<span class="trigger-badge">Trigger 1</span>`
                 : '';
@@ -1257,6 +1314,158 @@
                 <td>${trigger1Html}</td>
             </tr>`;
         }
+        // ── Straddle Tab ───────────────────────────────────────────────
+        let straddleChart = null;
+        let straddleChartData = { labels: [], data: [] };
+        let straddleDayLow = null, straddleDayHigh = null;
+        let straddleAlertTriggered = {};
+
+        async function loadStraddle() {
+            try {
+                const resp = await fetch('/api/straddle');
+                const result = await resp.json();
+                if (!result.success) {
+                    document.getElementById('st-tbody').innerHTML =
+                        `<tr><td colspan="4" style="text-align:center;color:#ef5350;padding:20px;font-size:12px;">${result.message || 'Failed to load'}</td></tr>`;
+                    return;
+                }
+
+                document.getElementById('st-spot').textContent   = result.nifty_spot ? result.nifty_spot.toFixed(2) : '—';
+                document.getElementById('st-atm').textContent    = result.atm_strike || '—';
+                document.getElementById('st-expiry').textContent = result.expiry || '—';
+                document.getElementById('st-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+                const rows = result.data || [];
+                const lowestRow = rows.find(r => r.is_lowest);
+                const atmRow    = rows.find(r => r.is_atm);
+
+                if (lowestRow) {
+                    document.getElementById('st-lowest').textContent = `${lowestRow.strike} → ₹${lowestRow.straddle.toFixed(2)}`;
+
+                    // Track day low/high
+                    const p = lowestRow.straddle;
+                    if (straddleDayLow === null || p < straddleDayLow) straddleDayLow = p;
+                    if (straddleDayHigh === null || p > straddleDayHigh) straddleDayHigh = p;
+                    document.getElementById('st-day-low').textContent  = `₹${straddleDayLow.toFixed(2)}`;
+                    document.getElementById('st-day-high').textContent = `₹${straddleDayHigh.toFixed(2)}`;
+
+                    // Premium spike alert (50% / 75% / 100% from day low)
+                    if (straddleDayLow > 0) {
+                        const pct = ((p - straddleDayLow) / straddleDayLow) * 100;
+                        [50, 75, 100].forEach(thresh => {
+                            if (pct >= thresh && !straddleAlertTriggered[thresh]) {
+                                straddleAlertTriggered[thresh] = true;
+                                const bar = document.getElementById('st-alert-bar');
+                                bar.style.display = 'block';
+                                bar.textContent = `🚨 Premium Spike Alert: +${pct.toFixed(1)}% from day low (₹${straddleDayLow.toFixed(2)}) — Current ₹${p.toFixed(2)} at strike ${lowestRow.strike}`;
+                            }
+                        });
+                    }
+
+                    // Update chart
+                    const now = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    straddleChartData.labels.push(now);
+                    straddleChartData.data.push(p);
+                    if (straddleChartData.labels.length > 200) {
+                        straddleChartData.labels.shift();
+                        straddleChartData.data.shift();
+                    }
+                    updateStraddleChart();
+                }
+
+                // Render table — show ±3 strikes around lowest
+                const tbody = document.getElementById('st-tbody');
+                tbody.innerHTML = '';
+                const lowestStrike = lowestRow ? lowestRow.strike : (atmRow ? atmRow.strike : null);
+                const visible = lowestStrike ? rows.filter(r => Math.abs(r.strike - lowestStrike) <= 350) : rows;
+
+                visible.forEach(r => {
+                    const isHighlight = r.is_lowest;
+                    const isAtm = r.is_atm;
+                    const bg = isHighlight ? 'background:#1a3a2a;border-left:3px solid #26a69a;' : (isAtm ? 'background:#1a2a3a;' : '');
+                    const fw = isHighlight ? 'font-weight:700;' : '';
+                    tbody.innerHTML += `
+                        <tr style="${bg}${fw}">
+                            <td style="padding:6px 10px;font-size:12px;color:${isHighlight?'#26a69a':'#c9d1d9'};">${r.strike}${isHighlight?' 🎯':''}</td>
+                            <td style="padding:6px 4px;font-size:11px;color:#8b949e;text-align:right;">₹${r.ce_ltp.toFixed(2)}</td>
+                            <td style="padding:6px 4px;font-size:11px;color:#8b949e;text-align:right;">₹${r.pe_ltp.toFixed(2)}</td>
+                            <td style="padding:6px 10px;font-size:12px;color:${isHighlight?'#f0b429':'#e6edf3'};text-align:right;font-weight:600;">₹${r.straddle.toFixed(2)}</td>
+                        </tr>`;
+                });
+
+            } catch(e) {
+                console.error('Straddle load error:', e);
+            }
+        }
+
+        function syncY2Axis() {}
+
+        function updateStraddleChart() {
+            const ctx = document.getElementById('st-chart').getContext('2d');
+            if (!straddleChart) {
+                straddleChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: straddleChartData.labels,
+                        datasets: [{
+                            label: 'ATM Straddle Premium',
+                            data: straddleChartData.data,
+                            borderColor: '#26a69a',
+                            backgroundColor: 'rgba(38,166,154,0.08)',
+                            borderWidth: 1.5,
+                            pointRadius: 0,
+                            fill: true,
+                            tension: 0.2,
+                            yAxisID: 'y'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: false,
+                        plugins: {
+                            legend: { display: false },
+                            zoom: {
+                                zoom: {
+                                    wheel: { enabled: true },
+                                    pinch: { enabled: true },
+                                    mode: 'x',
+                                    onZoom: () => { straddleZoomed = true; }
+                                },
+                                pan: {
+                                    enabled: true,
+                                    mode: 'x',
+                                    onPan: () => { straddleZoomed = true; }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: { ticks: { color: '#555', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: '#21262d' } },
+                            y: { position: 'left', ticks: { color: '#8b949e', font: { size: 10 }, callback: v => '₹' + v.toFixed(0) }, grid: { color: '#21262d' } },
+                            y2: { position: 'right', ticks: { color: '#8b949e', font: { size: 10 }, callback: v => '₹' + v.toFixed(0) }, grid: { drawOnChartArea: false } }
+                        }
+                    },
+                    plugins: [{
+                        id: 'syncY2',
+                        afterUpdate(chart) {
+                            const y = chart.scales['y'];
+                            const y2opts = chart.options.scales.y2;
+                            if (y && y2opts && (y2opts.min !== y.min || y2opts.max !== y.max)) {
+                                y2opts.min = y.min;
+                                y2opts.max = y.max;
+                                // schedule one more render to apply the new limits
+                                setTimeout(() => chart.update('none'), 0);
+                            }
+                        }
+                    }]
+                });
+            } else {
+                straddleChart.data.labels = straddleChartData.labels;
+                straddleChart.data.datasets[0].data = straddleChartData.data;
+                straddleChart.update('none');
+            }
+        }
+
     </script>
 </body>
 

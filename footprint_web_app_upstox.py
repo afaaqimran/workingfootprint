@@ -493,7 +493,13 @@ class UpstoxAPI:
             response = requests.get(f"{self.base_url}/v3/feed/market-data-feed/authorize", headers=headers)
             if response.status_code == 200:
                 self.logged_in = True
-                return {'success': True, 'message': 'Login successful'}
+                # Check analytics token expiry (expires 21 Mar 2027)
+                expiry = datetime(2027, 3, 21)
+                days_left = (expiry - datetime.now()).days
+                warning = None
+                if days_left <= 10:
+                    warning = f'⚠️ Analytics token expires in {days_left} day(s) on 21 Mar 2027. Please regenerate it.'
+                return {'success': True, 'message': 'Login successful', 'warning': warning}
             else:
                 return {'success': False, 'message': f'Token verification failed: {response.status_code}'}
         except Exception as e:
@@ -524,6 +530,8 @@ class UpstoxAPI:
 
         # Subscribe NIFTY options strikes in background
         threading.Thread(target=self.subscribe_options_strikes, daemon=True).start()
+        # Start ATM monitor — re-subscribes when spot moves by 1 strike
+        threading.Thread(target=self._atm_monitor, daemon=True).start()
 
     def subscribe_options_strikes(self, nifty_ltp=None):
         """
@@ -582,9 +590,8 @@ class UpstoxAPI:
                 strikes = sorted(set(float(o.get('strike_price', 0)) for o in expiry_options if o.get('strike_price')))
                 atm_strike = strikes[len(strikes) // 2] if strikes else 24000
 
-            # 2 ATM + 5 ITM for each side (7 CE + 7 PE = 14 instruments)
-            ce_strikes = [atm_strike - i * strike_step for i in range(7)]
-            pe_strikes = [atm_strike + i * strike_step for i in range(7)]
+            # 7 strikes above and below ATM — subscribe both CE and PE for each
+            all_strikes = [atm_strike + i * strike_step for i in range(-6, 7)]  # ATM-300 to ATM+300
 
             opt_lookup = {}
             for opt in expiry_options:
@@ -594,26 +601,28 @@ class UpstoxAPI:
             new_meta = []
             new_keys = set()
 
-            for strike in ce_strikes:
-                ikey = opt_lookup.get((float(strike), 'CE'))
-                label = 'ATM' if strike == atm_strike else f'ATM-{int(atm_strike - strike)}'
-                new_meta.append({'strike': strike, 'type': 'CE', 'label': label,
-                                  'instrument_key': ikey, 'expiry': nearest_expiry.strftime('%d %b %Y')})
-                if ikey:
-                    new_keys.add(ikey)
-
-            for strike in pe_strikes:
-                ikey = opt_lookup.get((float(strike), 'PE'))
-                label = 'ATM' if strike == atm_strike else f'ATM+{int(strike - atm_strike)}'
-                new_meta.append({'strike': strike, 'type': 'PE', 'label': label,
-                                  'instrument_key': ikey, 'expiry': nearest_expiry.strftime('%d %b %Y')})
-                if ikey:
-                    new_keys.add(ikey)
+            for strike in all_strikes:
+                for opt_type in ('CE', 'PE'):
+                    ikey = opt_lookup.get((float(strike), opt_type))
+                    if strike < atm_strike:
+                        label = f'ATM-{int(atm_strike - strike)}'
+                    elif strike > atm_strike:
+                        label = f'ATM+{int(strike - atm_strike)}'
+                    else:
+                        label = 'ATM'
+                    new_meta.append({'strike': strike, 'type': opt_type, 'label': label,
+                                      'instrument_key': ikey, 'expiry': nearest_expiry.strftime('%d %b %Y')})
+                    if ikey:
+                        new_keys.add(ikey)
 
             # Unsubscribe old option keys if they changed
             if self.options_instrument_keys and self.options_instrument_keys != new_keys:
+                dropped = self.options_instrument_keys - new_keys
                 if self.ws_client:
                     self.ws_client.unsubscribe(self.options_instrument_keys)
+                # Clear stale cache for dropped keys
+                for k in dropped:
+                    self.options_cache.pop(k, None)
 
             self.options_meta = new_meta
             self.options_instrument_keys = new_keys
@@ -624,6 +633,35 @@ class UpstoxAPI:
 
         except Exception as e:
             print(f"❌ Error subscribing options strikes: {e}")
+
+    def _atm_monitor(self):
+        """Re-subscribe options whenever ATM strike shifts by 50 pts"""
+        last_atm = None
+        HYSTERESIS = 15  # spot must move 15 pts past strike boundary before switching ATM
+        while True:
+            try:
+                time.sleep(10)  # check every 10 seconds
+                spot = self.nifty_spot_ltp
+                if spot <= 0:
+                    continue
+                current_atm = round(spot / 50) * 50
+                if last_atm is None:
+                    last_atm = current_atm
+                    self.subscribe_options_strikes(nifty_ltp=spot)
+                    continue
+                # Only shift ATM if spot has moved beyond hysteresis buffer
+                midpoint = (last_atm + current_atm) / 2
+                if current_atm != last_atm:
+                    if current_atm > last_atm and spot >= last_atm + 25 + HYSTERESIS:
+                        print(f"🔄 ATM shifted {last_atm} → {current_atm}, re-subscribing options...")
+                        self.subscribe_options_strikes(nifty_ltp=spot)
+                        last_atm = current_atm
+                    elif current_atm < last_atm and spot <= last_atm - 25 - HYSTERESIS:
+                        print(f"🔄 ATM shifted {last_atm} → {current_atm}, re-subscribing options...")
+                        self.subscribe_options_strikes(nifty_ltp=spot)
+                        last_atm = current_atm
+            except Exception as e:
+                print(f"❌ ATM monitor error: {e}")
 
     def process_websocket_data(self, data):
         """Process incoming WebSocket data"""
@@ -1015,6 +1053,66 @@ def get_options_chain():
 
     except Exception as e:
         print(f"❌ Error in options-chain: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/straddle')
+def get_straddle():
+    """Return straddle premiums (CE+PE LTP) per strike, sorted by strike"""
+    if 'user_id' not in session or session['user_id'] not in authenticated_users:
+        return jsonify({'success': False}), 401
+
+    user_id = session['user_id']
+    upstox = authenticated_users[user_id]
+
+    try:
+        if not upstox.options_meta:
+            threading.Thread(target=upstox.subscribe_options_strikes, daemon=True).start()
+            return jsonify({'success': False, 'message': 'Options data loading — retry in a few seconds'})
+
+        # Build strike -> {ce_ltp, pe_ltp} map
+        strikes = {}
+        for meta in upstox.options_meta:
+            strike = meta['strike']
+            ikey = meta.get('instrument_key')
+            ltp = upstox.options_cache.get(ikey, {}).get('ltp', 0) if ikey else 0
+            if strike not in strikes:
+                strikes[strike] = {'ce': 0, 'pe': 0}
+            if meta['type'] == 'CE':
+                strikes[strike]['ce'] = ltp
+            else:
+                strikes[strike]['pe'] = ltp
+
+        nifty_spot = upstox.nifty_spot_ltp or upstox.prev_ltp
+        atm_strike = round(nifty_spot / 50) * 50 if nifty_spot else None
+
+        rows = []
+        for strike, ltps in sorted(strikes.items()):
+            straddle = round(ltps['ce'] + ltps['pe'], 2)
+            rows.append({
+                'strike': strike,
+                'ce_ltp': ltps['ce'],
+                'pe_ltp': ltps['pe'],
+                'straddle': straddle,
+                'is_atm': strike == atm_strike
+            })
+
+        # Find lowest straddle premium
+        if rows:
+            min_row = min(rows, key=lambda r: r['straddle'] if r['straddle'] > 0 else float('inf'))
+            for r in rows:
+                r['is_lowest'] = (r['strike'] == min_row['strike'])
+
+        expiry = upstox.options_meta[0].get('expiry', '—') if upstox.options_meta else '—'
+        return jsonify({
+            'success': True,
+            'nifty_spot': nifty_spot,
+            'atm_strike': atm_strike,
+            'expiry': expiry,
+            'data': rows,
+            'timestamp': int(time.time() * 1000)
+        })
+    except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
