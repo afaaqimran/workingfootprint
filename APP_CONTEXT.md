@@ -209,14 +209,21 @@ Three tabs at the bottom of the screen:
 - NIFTY ATM/ITM options table
 - Columns: Type, Strike, Label, ATP, LTP, ATP-LTP, Open, High, Low, Volume, T1 trigger
 - Auto-refreshes every 2 seconds from WebSocket cache
-- T1 trigger: highlights when ITM ATP-LTP < ATM ATP-LTP
+- **Trigger 1 logic** — fires on an ITM option when ALL 3 conditions are met:
+  1. Option is ITM (CE strike < ATM, or PE strike > ATM)
+  2. LTP < ATP (trading below average price)
+  3. `|ATP - LTP|` of this ITM row < `|ATP - LTP|` of the ATM row (same type)
+  - Interpretation: ITM option is showing less discount to its average than ATM — signals relative strength/directional intent
 
 ### 🎯 Straddle Tab
 - Header: NIFTY Spot, ATM strike, Expiry, Lowest straddle, Day Low/High
-- Strike table: ±7 strikes around lowest premium, columns: Strike | CE LTP | PE LTP | Straddle
+- Strike table: ±350 pts around lowest premium strike, columns: Strike | CE LTP | PE LTP | Straddle
 - Lowest premium strike highlighted with 🎯
-- Live premium chart (Chart.js line chart) with zoom/pan (scroll wheel, pinch, drag)
-- Reset Zoom button
+- Live premium chart (Chart.js line chart) with Y-axis on both left and right sides
+  - Y-axis (both sides) auto-syncs to actual premium range via `afterUpdate` plugin hook
+  - Zoom/pan via scroll wheel, pinch, drag (x-axis only)
+  - Reset Zoom button — resets view and re-enables auto-fit on live updates
+  - Chart updates live without requiring Reset Zoom on login
 - Premium spike alerts at 50%, 75%, 100% rise from day low
 - Auto-refreshes every 2 seconds
 
@@ -298,4 +305,4 @@ protobuf>=4.21.0
 
 ---
 
-*Last updated: 21 March 2026*
+*Last updated: 23 March 2026*
