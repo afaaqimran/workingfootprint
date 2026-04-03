@@ -617,12 +617,10 @@ class UpstoxAPI:
 
             # Unsubscribe old option keys if they changed
             if self.options_instrument_keys and self.options_instrument_keys != new_keys:
-                dropped = self.options_instrument_keys - new_keys
                 if self.ws_client:
                     self.ws_client.unsubscribe(self.options_instrument_keys)
-                # Clear stale cache for dropped keys
-                for k in dropped:
-                    self.options_cache.pop(k, None)
+                # Do NOT clear cache for dropped keys — retain last known LTP to avoid
+                # straddle dips during the re-subscription gap while new ticks arrive
 
             self.options_meta = new_meta
             self.options_instrument_keys = new_keys
@@ -635,8 +633,9 @@ class UpstoxAPI:
             print(f"❌ Error subscribing options strikes: {e}")
 
     def _atm_monitor(self):
-        """Re-subscribe options whenever ATM strike shifts by 50 pts"""
+        """Re-subscribe options whenever ATM strike shifts by 50 pts or expiry rolls over"""
         last_atm = None
+        last_subscribed_expiry = None  # track the expiry date we last subscribed
         HYSTERESIS = 15  # spot must move 15 pts past strike boundary before switching ATM
         while True:
             try:
@@ -645,12 +644,28 @@ class UpstoxAPI:
                 if spot <= 0:
                     continue
                 current_atm = round(spot / 50) * 50
+
+                # Detect expiry rollover: if today is past the subscribed expiry, re-subscribe
+                if self.options_meta:
+                    subscribed_expiry_str = self.options_meta[0].get('expiry')
+                    if subscribed_expiry_str != last_subscribed_expiry:
+                        last_subscribed_expiry = subscribed_expiry_str
+                    else:
+                        try:
+                            subscribed_expiry = datetime.strptime(subscribed_expiry_str, '%d %b %Y').date()
+                            if datetime.now().date() > subscribed_expiry:
+                                print(f"🔄 Expiry {subscribed_expiry_str} has passed, rolling to next expiry...")
+                                self.subscribe_options_strikes(nifty_ltp=spot)
+                                last_atm = current_atm
+                                continue
+                        except Exception:
+                            pass
+
                 if last_atm is None:
                     last_atm = current_atm
                     self.subscribe_options_strikes(nifty_ltp=spot)
                     continue
                 # Only shift ATM if spot has moved beyond hysteresis buffer
-                midpoint = (last_atm + current_atm) / 2
                 if current_atm != last_atm:
                     if current_atm > last_atm and spot >= last_atm + 25 + HYSTERESIS:
                         print(f"🔄 ATM shifted {last_atm} → {current_atm}, re-subscribing options...")
@@ -831,6 +846,10 @@ def login():
     if result['success']:
         user_id = 'analytics_user'
         session['user_id'] = user_id
+        # Disconnect existing WebSocket before replacing (Upstox allows only 1 concurrent connection)
+        existing = authenticated_users.get(user_id)
+        if existing and existing.ws_client:
+            existing.ws_client.disconnect()
         authenticated_users[user_id] = upstox
         upstox.start_data_polling(user_id, '3')
         return jsonify(result)

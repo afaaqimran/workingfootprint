@@ -30,6 +30,7 @@ class UpstoxWebSocketV3:
         self.thread = None
         self.stop_event = threading.Event()
         self.subscribed_instruments = set()
+        self.instrument_modes = {}  # instrument_key -> mode (for correct resubscription)
         self.current_mode = "full"  # Default to full mode
         self.session = requests.Session()  # Use session for cookies
         
@@ -115,15 +116,8 @@ class UpstoxWebSocketV3:
             else:
                 print("🛑 WebSocket loop stopped by user")
 
-    def subscribe(self, instrument_keys, mode="full"):
-        """Subscribe to instruments"""
-        self.subscribed_instruments.update(instrument_keys)
-        self.current_mode = mode
-        
-        if not self.ws or not self.ws.sock or not self.ws.sock.connected:
-            print("⚠️ WebSocket not connected, subscription queued")
-            return
-        
+    def _send_subscribe(self, instrument_keys, mode="full"):
+        """Send subscription message over the WebSocket (internal)"""
         try:
             request = {
                 "guid": str(uuid.uuid4()),
@@ -133,16 +127,29 @@ class UpstoxWebSocketV3:
                     "instrumentKeys": list(instrument_keys)
                 }
             }
-            
-            # Send as binary (UTF-8 encoded JSON)
             self.ws.send(json.dumps(request).encode('utf-8'), opcode=websocket.ABNF.OPCODE_BINARY)
             print(f"📤 Subscribed to {len(instrument_keys)} instruments in {mode} mode")
         except Exception as e:
             print(f"❌ Error during subscription: {e}")
 
+    def subscribe(self, instrument_keys, mode="full"):
+        """Subscribe to instruments"""
+        self.subscribed_instruments.update(instrument_keys)
+        self.current_mode = mode
+        for k in instrument_keys:
+            self.instrument_modes[k] = mode
+        
+        if not self.ws or not self.ws.sock or not self.ws.sock.connected:
+            print("⚠️ WebSocket not connected, subscription queued")
+            return
+        
+        self._send_subscribe(instrument_keys, mode)
+
     def unsubscribe(self, instrument_keys):
         """Unsubscribe from instruments"""
         self.subscribed_instruments -= set(instrument_keys)
+        for k in instrument_keys:
+            self.instrument_modes.pop(k, None)
         if not self.ws or not self.ws.sock or not self.ws.sock.connected:
             return
         try:
@@ -160,11 +167,16 @@ class UpstoxWebSocketV3:
         print("✅ WebSocket Connected")
         self.reconnect_delay = 1  # Reset backoff on successful connection
         
-        # Resubscribe if we have pending instruments
+        # Resubscribe if we have pending instruments, grouped by mode
         if self.subscribed_instruments:
-            # Small delay to ensure connection is stable
             time.sleep(0.5)
-            self.subscribe(self.subscribed_instruments, self.current_mode)
+            # Group instruments by their mode for correct resubscription
+            mode_groups = {}
+            for k in self.subscribed_instruments:
+                m = self.instrument_modes.get(k, self.current_mode)
+                mode_groups.setdefault(m, set()).add(k)
+            for m, keys in mode_groups.items():
+                self._send_subscribe(keys, m)
 
     def on_message(self, ws, message):
         """Handle incoming messages (Protobuf)"""
@@ -203,5 +215,3 @@ class UpstoxWebSocketV3:
         self.stop_event.set()
         if self.ws:
             self.ws.close()
-        if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=2)
