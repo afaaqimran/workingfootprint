@@ -379,11 +379,67 @@
         </div>
     </div>
 
+    <!-- OI Tracker Panel -->
+    <div id="oi-panel" style="display:none;position:fixed;top:0;left:48px;right:0;bottom:36px;background:#131722;overflow:auto;z-index:999;padding:8px;padding-top:60px;box-sizing:border-box;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+            <span style="color:#8b949e;font-size:12px;">NIFTY Spot: <strong id="oi-spot" style="color:#e6edf3;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">ATM: <strong id="oi-atm" style="color:#26a69a;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">Expiry: <span id="oi-expiry">—</span></span>
+            <button class="btn" onclick="loadOITracker()" style="margin-left:auto;padding:4px 10px;font-size:11px;">↻ Refresh</button>
+            <span id="oi-last-update" style="color:#555;font-size:11px;"></span>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+            <!-- CALL OI Table -->
+            <div style="flex:1;min-width:320px;">
+                <div style="font-size:11px;font-weight:700;color:#26a69a;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">📈 CALL Options (CE)</div>
+                <table style="width:100%;border-collapse:collapse;font-size:11px;" id="oi-ce-table">
+                    <thead>
+                        <tr style="background:#1e2130;">
+                            <th style="padding:6px 8px;text-align:left;color:#8b949e;border-bottom:1px solid #2B2B43;">Strike</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">OI</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Volume</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">5m %</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">10m %</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">15m %</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">30m %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="oi-ce-tbody">
+                        <tr><td colspan="8" style="text-align:center;color:#555;padding:20px;">Click OI Tracker tab to load</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <!-- PUT OI Table -->
+            <div style="flex:1;min-width:320px;">
+                <div style="font-size:11px;font-weight:700;color:#ef5350;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">📉 PUT Options (PE)</div>
+                <table style="width:100%;border-collapse:collapse;font-size:11px;" id="oi-pe-table">
+                    <thead>
+                        <tr style="background:#1e2130;">
+                            <th style="padding:6px 8px;text-align:left;color:#8b949e;border-bottom:1px solid #2B2B43;">Strike</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">OI</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Volume</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">5m %</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">10m %</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">15m %</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">30m %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="oi-pe-tbody">
+                        <tr><td colspan="8" style="text-align:center;color:#555;padding:20px;">Click OI Tracker tab to load</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <!-- Tab Navigation -->
     <div class="tab-nav">
         <button class="tab-btn active" id="tab-chart" onclick="switchTab('chart')" title="Chart">📈</button>
         <button class="tab-btn" id="tab-options" onclick="switchTab('options')" title="Options Chain">⚡</button>
         <button class="tab-btn" id="tab-straddle" onclick="switchTab('straddle')" title="Straddle">🎯</button>
+        <button class="tab-btn" id="tab-oi" onclick="switchTab('oi')" title="OI Tracker">📊</button>
     </div>
 
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -582,7 +638,7 @@
         function initChart() {
             const container = document.getElementById('chart-container');
             chart = LightweightCharts.createChart(container, {
-                width: window.innerWidth,
+                width: window.innerWidth - 48,
                 height: window.innerHeight - 36,
                 layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc' },
                 grid: { vertLines: { visible: false }, horzLines: { visible: false } },
@@ -947,7 +1003,7 @@
         window.addEventListener('resize', () => {
             if (chart) {
                 chart.applyOptions({
-                    width: window.innerWidth,
+                    width: window.innerWidth - 48,
                     height: window.innerHeight
                 });
                 setupFootprintCanvas();
@@ -1209,6 +1265,7 @@
         // ── Options Chain ──────────────────────────────────────────────
         let optionsRefreshTimer = null;
         let straddleRefreshTimer = null;
+        let oiRefreshTimer = null;
         let activeTab = 'chart';
 
         function startBackgroundPolling() {
@@ -1220,6 +1277,10 @@
                 loadStraddle();
                 straddleRefreshTimer = setInterval(loadStraddle, 2000);
             }
+            if (!oiRefreshTimer) {
+                loadOITracker();
+                oiRefreshTimer = setInterval(loadOITracker, 5000);
+            }
         }
 
         function switchTab(tab) {
@@ -1227,8 +1288,10 @@
             document.getElementById('tab-chart').classList.toggle('active', tab === 'chart');
             document.getElementById('tab-options').classList.toggle('active', tab === 'options');
             document.getElementById('tab-straddle').classList.toggle('active', tab === 'straddle');
+            document.getElementById('tab-oi').classList.toggle('active', tab === 'oi');
             document.getElementById('options-panel').classList.toggle('visible', tab === 'options');
             document.getElementById('straddle-panel').style.display = (tab === 'straddle') ? 'flex' : 'none';
+            document.getElementById('oi-panel').style.display = (tab === 'oi') ? 'block' : 'none';
         }
 
         async function loadOptionsChain() {
@@ -1333,6 +1396,50 @@
         let straddleAlertTriggered = {};
         let straddleZoomed = false;
 
+
+        async function loadOITracker() {
+            try {
+                const resp = await fetch('/api/oi-tracker');
+                const result = await resp.json();
+                if (!result.success) {
+                    const msg = `<tr><td colspan="8" style="text-align:center;color:#ef5350;padding:20px;">${result.message || 'Failed to load'}</td></tr>`;
+                    document.getElementById('oi-ce-tbody').innerHTML = msg;
+                    document.getElementById('oi-pe-tbody').innerHTML = msg;
+                    return;
+                }
+                document.getElementById('oi-spot').textContent = result.nifty_spot ? result.nifty_spot.toFixed(2) : '—';
+                document.getElementById('oi-atm').textContent = result.atm_strike || '—';
+                document.getElementById('oi-expiry').textContent = result.expiry || '—';
+                document.getElementById('oi-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+                function buildOIRow(row, atm) {
+                    const isAtm = row.strike === atm;
+                    const bg = isAtm ? 'background:rgba(38,166,154,0.08);' : '';
+                    const fw = isAtm ? 'font-weight:600;' : '';
+                    function chgCell(pct) {
+                        if (pct === null || pct === undefined) return `<td style="padding:5px 8px;text-align:right;color:#555;">—</td>`;
+                        const color = pct > 0 ? '#26a69a' : pct < 0 ? '#ef5350' : '#8b949e';
+                        const sign = pct > 0 ? '+' : '';
+                        return `<td style="padding:5px 8px;text-align:right;color:${color};${fw}">${sign}${pct.toFixed(2)}%</td>`;
+                    }
+                    return `<tr style="${bg}">
+                        <td style="padding:5px 8px;${fw}color:${isAtm?'#26a69a':'#c9d1d9'};">${row.strike}${isAtm?' ◀':''}</td>
+                        <td style="padding:5px 8px;text-align:right;${fw}">₹${row.ltp.toFixed(2)}</td>
+                        <td style="padding:5px 8px;text-align:right;${fw}">${row.oi.toLocaleString()}</td>
+                        <td style="padding:5px 8px;text-align:right;color:#8b949e;">${row.volume.toLocaleString()}</td>
+                        ${chgCell(row.oi_chg['5m'])}
+                        ${chgCell(row.oi_chg['10m'])}
+                        ${chgCell(row.oi_chg['15m'])}
+                        ${chgCell(row.oi_chg['30m'])}
+                    </tr>`;
+                }
+
+                document.getElementById('oi-ce-tbody').innerHTML = result.calls.map(r => buildOIRow(r, result.atm_strike)).join('') || '<tr><td colspan="8" style="text-align:center;color:#555;padding:20px;">No data</td></tr>';
+                document.getElementById('oi-pe-tbody').innerHTML = result.puts.map(r => buildOIRow(r, result.atm_strike)).join('') || '<tr><td colspan="8" style="text-align:center;color:#555;padding:20px;">No data</td></tr>';
+            } catch(e) {
+                console.error('OI Tracker load error:', e);
+            }
+        }
         async function loadStraddle() {
             try {
                 const resp = await fetch('/api/straddle');

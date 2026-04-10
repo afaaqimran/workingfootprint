@@ -455,11 +455,13 @@ class UpstoxAPI:
         self.prev_category = 'buy'
         self.current_minute_candle = None  # Local aggregation cache
 
-        # Options real-time cache: instrument_key -> {ltp, atp, open, high, low, cp}
+        # Options real-time cache: instrument_key -> {ltp, atp, open, high, low, cp, oi}
         self.options_cache = {}
         self.options_instrument_keys = set()  # currently subscribed option keys
         self.options_meta = []  # [{strike, type, label, instrument_key}, ...]
         self.nifty_spot_ltp = 0  # NIFTY 50 index spot price for ATM calculation
+        # OI history for change tracking: instrument_key -> [(timestamp_ms, oi), ...]
+        self.oi_history = {}
 
         # WebSocket Client
         self.ws_client = None
@@ -702,6 +704,7 @@ class UpstoxAPI:
                         ohlc_list = full.get('marketOHLC', {}).get('ohlc', [])
                         # Pick the 1-day OHLC entry
                         day_ohlc = next((o for o in ohlc_list if o.get('interval') == '1d'), {})
+                        oi_val = int(full.get('oi', 0) or 0)
                         self.options_cache[instrument_key] = {
                             'ltp':    ltpc.get('ltp', 0),
                             'cp':     ltpc.get('cp', 0),
@@ -710,8 +713,15 @@ class UpstoxAPI:
                             'open':   day_ohlc.get('open', 0),
                             'high':   day_ohlc.get('high', 0),
                             'low':    day_ohlc.get('low', 0),
+                            'oi':     oi_val,
                             'ts':     current_ts,
                         }
+                        # Record OI history for change tracking (keep last 35 min)
+                        if oi_val > 0:
+                            hist = self.oi_history.setdefault(instrument_key, [])
+                            hist.append((current_ts, oi_val))
+                            cutoff = current_ts - 35 * 60 * 1000
+                            self.oi_history[instrument_key] = [(t, v) for t, v in hist if t >= cutoff]
                     continue  # don't process options as futures candles
 
                 if instrument_key != self.instrument_token:
@@ -1130,6 +1140,69 @@ def get_straddle():
             'expiry': expiry,
             'data': rows,
             'timestamp': int(time.time() * 1000)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/oi-tracker')
+def get_oi_tracker():
+    """Return OI data with change % over 5m/10m/15m/30m intervals for all subscribed options"""
+    if 'user_id' not in session or session['user_id'] not in authenticated_users:
+        return jsonify({'success': False}), 401
+
+    user_id = session['user_id']
+    upstox = authenticated_users[user_id]
+
+    try:
+        if not upstox.options_meta:
+            return jsonify({'success': False, 'message': 'Options data loading — please retry in a few seconds'})
+
+        now_ms = int(time.time() * 1000)
+        intervals = [5, 10, 15, 30]
+        calls, puts = [], []
+
+        for meta in upstox.options_meta:
+            ikey = meta.get('instrument_key')
+            cached = upstox.options_cache.get(ikey, {}) if ikey else {}
+            oi = cached.get('oi', 0)
+            hist = upstox.oi_history.get(ikey, []) if ikey else []
+
+            oi_changes = {}
+            for mins in intervals:
+                target_ms = now_ms - mins * 60 * 1000
+                past = min(hist, key=lambda x: abs(x[0] - target_ms), default=None) if hist else None
+                if past and abs(past[0] - target_ms) < 5 * 60 * 1000 and past[1] > 0:
+                    pct = round((oi - past[1]) / past[1] * 100, 2)
+                else:
+                    pct = None
+                oi_changes[f'{mins}m'] = pct
+
+            row = {
+                'strike':  meta['strike'],
+                'type':    meta['type'],
+                'label':   meta['label'],
+                'ltp':     cached.get('ltp', 0),
+                'oi':      oi,
+                'volume':  cached.get('volume', 0),
+                'oi_chg':  oi_changes,
+            }
+            if meta['type'] == 'CE':
+                calls.append(row)
+            else:
+                puts.append(row)
+
+        nifty_spot = upstox.nifty_spot_ltp or upstox.prev_ltp
+        atm_strike = round(nifty_spot / 50) * 50 if nifty_spot else None
+        expiry = upstox.options_meta[0].get('expiry', '—') if upstox.options_meta else '—'
+
+        return jsonify({
+            'success':    True,
+            'nifty_spot': nifty_spot,
+            'atm_strike': atm_strike,
+            'expiry':     expiry,
+            'calls':      sorted(calls, key=lambda r: r['strike']),
+            'puts':       sorted(puts, key=lambda r: r['strike']),
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500

@@ -7,7 +7,7 @@ This document provides a complete reference for any AI system or developer worki
 ## Overview
 
 **Application Name:** Afaaqs Foot Print Server  
-**Purpose:** Real-time NIFTY/BANKNIFTY futures footprint chart with options chain and straddle premium tracking, powered by Upstox WebSocket market data.  
+**Purpose:** Real-time NIFTY/BANKNIFTY futures footprint chart with options chain, straddle premium tracking, and OI (Open Interest) tracker — powered by Upstox WebSocket market data.  
 **Server:** Vultr VPS — IP `65.20.75.231`  
 **Port:** `5002` (firewall open)  
 **URL:** `http://65.20.75.231:5002`
@@ -73,7 +73,7 @@ git push backup feature/options-chain-websocket-stability
 ├── instruments_cache.json          # Cached Upstox instrument master (refreshed every 24h)
 ├── footprint.service               # Original service file (reference only)
 ├── templates/
-│   ├── chart.html                  # Main chart UI (footprint + options chain + straddle tabs)
+│   ├── chart.html                  # Main chart UI (footprint + options chain + straddle + OI tracker tabs)
 │   └── login_upstox.html           # Login page
 ```
 
@@ -129,7 +129,8 @@ UpstoxWebSocketV3 (upstox_websocket_v3.py)
         ▼
 process_websocket_data() in footprint_web_app_upstox.py
   ├── NSE_INDEX|Nifty 50  → nifty_spot_ltp (for ATM calculation)
-  ├── Options keys        → options_cache {ltp, atp, ohlc, volume}
+  ├── Options keys        → options_cache {ltp, atp, ohlc, volume, oi}
+  │                       → oi_history {(timestamp_ms, oi)} rolling 35-min window
   └── Futures token       → OHLC candle + footprint processing
         │
         ├── FootprintProcessor.process_intrabar_footprint()
@@ -151,7 +152,7 @@ On login, the app subscribes to:
 2. **NIFTY 50 spot index** — `NSE_INDEX|Nifty 50`, mode `ltpc`
 3. **NIFTY options** — 13 strikes (ATM-300 to ATM+300), both CE and PE, mode `full`
 
-**ATM Monitor thread** — runs every 10 seconds, re-subscribes options if ATM strike shifts by 50 pts (i.e. spot crosses a strike boundary). Clears stale cache for dropped strikes.
+**ATM Monitor thread** — runs every 10 seconds, re-subscribes options if ATM strike shifts by 50 pts (with 15pt hysteresis buffer). Clears stale cache for dropped strikes.
 
 ---
 
@@ -187,12 +188,13 @@ On login, the app subscribes to:
 | `/api/change-timeframe` | POST | Switch chart timeframe |
 | `/api/options-chain` | GET | NIFTY options chain from WebSocket cache |
 | `/api/straddle` | GET | Straddle premiums (CE+PE) per strike |
+| `/api/oi-tracker` | GET | OI + OI change % (5m/10m/15m/30m) for all subscribed options |
 
 ---
 
 ## Frontend UI (chart.html)
 
-Three tabs at the bottom of the screen:
+Four tabs at the bottom of the screen:
 
 ### 📈 Chart Tab
 - Lightweight Charts candlestick chart
@@ -227,6 +229,44 @@ Three tabs at the bottom of the screen:
 - Premium spike alerts at 50%, 75%, 100% rise from day low
 - Auto-refreshes every 2 seconds
 
+### 📊 OI Tracker Tab
+- Two side-by-side tables: CALL Options (CE) and PUT Options (PE)
+- Header: NIFTY Spot, ATM Strike, Expiry, last update time
+- Columns per table: Strike | LTP | OI | Volume | 5m % | 10m % | 15m % | 30m %
+- ATM row highlighted in teal with `◀` marker
+- OI change % colored green (increase) / red (decrease) / grey (no data yet)
+- OI change % shows `—` until sufficient history has accumulated for that interval
+- Auto-refreshes every 5 seconds from WebSocket cache + `oi_history`
+- Data sourced from the existing options WebSocket subscription (mode `full`) — no additional subscriptions needed
+
+---
+
+## OI Tracker — Backend Detail
+
+**Data source:** `fullFeed.marketFF.oi` field from Upstox WebSocket v3 `full` mode feed.
+
+**`options_cache`** (per instrument key) now includes:
+```python
+{
+    'ltp':    float,   # Last traded price
+    'cp':     float,   # Close price
+    'atp':    float,   # Average traded price
+    'volume': int,     # Volume traded today (VTT)
+    'open':   float,   # Day open
+    'high':   float,   # Day high
+    'low':    float,   # Day low
+    'oi':     int,     # Open interest (NEW)
+    'ts':     int,     # Timestamp ms
+}
+```
+
+**`oi_history`** (per instrument key):
+- List of `(timestamp_ms, oi)` tuples
+- Appended on every tick where `oi > 0`
+- Rolling 35-minute window (older entries pruned automatically)
+- Used by `/api/oi-tracker` to compute OI change % for 5m/10m/15m/30m intervals
+- Lookup: finds the closest historical entry within ±5 min of the target time
+
 ---
 
 ## Footprint Logic
@@ -255,7 +295,7 @@ Three tabs at the bottom of the screen:
 
 | Class | File | Purpose |
 |-------|------|---------|
-| `UpstoxAPI` | `footprint_web_app_upstox.py` | Per-user state: token, WebSocket, footprint processor, options cache |
+| `UpstoxAPI` | `footprint_web_app_upstox.py` | Per-user state: token, WebSocket, footprint processor, options cache, OI history |
 | `FootprintProcessor` | `footprint_web_app_upstox.py` | Classifies volume ticks as buy/sell |
 | `DataStorage` | `footprint_web_app_upstox.py` | SQLite read/write, resampling |
 | `InstrumentManager` | `instrument_manager.py` | Instrument master download/cache/lookup |
@@ -269,6 +309,7 @@ Three tabs at the bottom of the screen:
 - `thread.join()` is incompatible with eventlet — logout uses `stop_event.set()` + `ws.close()` instead of `disconnect()` to avoid crash.
 - Only 1 Gunicorn worker — required for Socket.IO state consistency (multiple workers would not share session state).
 - Analytics token is hardcoded in source — treat as sensitive credential, do not commit to public repos.
+- OI change % columns show `—` during the first N minutes after login (until `oi_history` accumulates enough data for each interval).
 
 ---
 
@@ -305,4 +346,4 @@ protobuf>=4.21.0
 
 ---
 
-*Last updated: 23 March 2026*
+*Last updated: 4 April 2026*
