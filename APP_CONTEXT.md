@@ -7,7 +7,7 @@ This document provides a complete reference for any AI system or developer worki
 ## Overview
 
 **Application Name:** Afaaqs Foot Print Server  
-**Purpose:** Real-time NIFTY/BANKNIFTY futures footprint chart with options chain, straddle premium tracking, and OI (Open Interest) tracker — powered by Upstox WebSocket market data.  
+**Purpose:** Real-time NIFTY/BANKNIFTY futures footprint chart with options chain, straddle premium tracking, OI tracker, volatility skew chart, and full option chain — powered by Upstox WebSocket market data.  
 **Server:** Vultr VPS — IP `65.20.75.231`  
 **Port:** `5002` (firewall open)  
 **URL:** `http://65.20.75.231:5002`
@@ -73,7 +73,7 @@ git push backup feature/options-chain-websocket-stability
 ├── instruments_cache.json          # Cached Upstox instrument master (refreshed every 24h)
 ├── footprint.service               # Original service file (reference only)
 ├── templates/
-│   ├── chart.html                  # Main chart UI (footprint + options chain + straddle + OI tracker tabs)
+│   ├── chart.html                  # Main chart UI (footprint + options chain + straddle + OI tracker + volatility skew + full option chain tabs)
 │   └── login_upstox.html           # Login page
 ```
 
@@ -189,12 +189,14 @@ On login, the app subscribes to:
 | `/api/options-chain` | GET | NIFTY options chain from WebSocket cache |
 | `/api/straddle` | GET | Straddle premiums (CE+PE) per strike |
 | `/api/oi-tracker` | GET | OI + OI change % (5m/10m/15m/30m) for all subscribed options |
+| `/api/volatility-skew` | GET | Implied volatility per strike computed via Black-Scholes (Newton-Raphson solver) |
+| `/api/option-chain-full` | GET | Full option chain paired by strike — CE left, PE right, with OI, OHLC, LTP |
 
 ---
 
 ## Frontend UI (chart.html)
 
-Four tabs at the bottom of the screen:
+Six tabs at the bottom of the screen:
 
 ### 📈 Chart Tab
 - Lightweight Charts candlestick chart
@@ -235,9 +237,36 @@ Four tabs at the bottom of the screen:
 - Columns per table: Strike | LTP | OI | Volume | 5m % | 10m % | 15m % | 30m %
 - ATM row highlighted in teal with `◀` marker
 - OI change % colored green (increase) / red (decrease) / grey (no data yet)
+- OI change % cells with `|change| >= 30%` get a pulsing highlight — teal background for +30%, red for -30%
 - OI change % shows `—` until sufficient history has accumulated for that interval
 - Auto-refreshes every 5 seconds from WebSocket cache + `oi_history`
 - Data sourced from the existing options WebSocket subscription (mode `full`) — no additional subscriptions needed
+
+### 📉 Volatility Skew Tab
+- Header: NIFTY Spot, ATM, Expiry, DTE (days to expiry)
+- Chart.js line chart plotting CE IV (teal) and PE IV (red) across all subscribed strikes
+- Dashed ATM vertical line via `chartjs-plugin-annotation`
+- IV computed server-side using Black-Scholes with Newton-Raphson solver (100 iterations, 0.001 precision)
+- Risk-free rate: 6.5% (India 10yr approx). IV cells turn amber when IV > 20%
+- Two IV tables below the chart: CE strikes (left) and PE strikes (right)
+- ATM row highlighted with `◀` marker
+- Auto-refreshes every 5 seconds while tab is active
+
+### 🔗 Option Chain Tab
+- Full NIFTY weekly option chain — CE on the left, Strike in the centre, PE on the right
+- Columns (CE side): OI | LTP | Open | High | Close | Low
+- Columns (PE side): LTP | Open | High | Close | Low | OI
+- ITM/OTM row highlighting:
+  - CE ITM rows (strike < ATM): subtle teal cell tint
+  - PE ITM rows (strike > ATM): subtle red/pink cell tint
+  - OTM rows: near-invisible grey tint
+  - ATM row: amber background, bold text, `◀` marker
+- Highest OI cell on each side highlighted in gold/amber with bold text
+- LTP colored green if above open, red if below
+- High column green, Low column red across both sides
+- OI values formatted as `1.2L`, `3.4Cr` for readability
+- Auto-scrolls to ATM row on first load
+- Auto-refreshes every 3 seconds while tab is active
 
 ---
 
@@ -269,7 +298,17 @@ Four tabs at the bottom of the screen:
 
 ---
 
-## Footprint Logic
+## Volatility Skew — Backend Detail
+
+**Route:** `/api/volatility-skew`  
+**Method:** Black-Scholes with Newton-Raphson IV solver  
+- Uses `ltp` from `options_cache` as market price input  
+- `S` = NIFTY spot, `K` = strike, `T` = DTE / 365, `r` = 0.065  
+- 100 Newton-Raphson iterations, convergence threshold 0.001  
+- Returns `None` for strikes where LTP is zero or below intrinsic value  
+- IV capped at 0–500% range to filter solver divergence  
+
+---
 
 **Method:** Intrabar  
 - `price > open` → Buy volume  
@@ -346,4 +385,4 @@ protobuf>=4.21.0
 
 ---
 
-*Last updated: 4 April 2026*
+*Last updated: 16 April 2026*

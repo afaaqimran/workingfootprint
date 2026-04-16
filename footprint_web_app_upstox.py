@@ -1208,6 +1208,163 @@ def get_oi_tracker():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+@app.route('/api/volatility-skew')
+def get_volatility_skew():
+    """Compute implied volatility across strikes using Black-Scholes and return skew data"""
+    import math
+
+    if 'user_id' not in session or session['user_id'] not in authenticated_users:
+        return jsonify({'success': False}), 401
+
+    user_id = session['user_id']
+    upstox = authenticated_users[user_id]
+
+    try:
+        if not upstox.options_meta:
+            return jsonify({'success': False, 'message': 'Options data loading — please retry in a few seconds'})
+
+        nifty_spot = upstox.nifty_spot_ltp or upstox.prev_ltp
+        if not nifty_spot:
+            return jsonify({'success': False, 'message': 'Waiting for NIFTY spot price'})
+
+        atm_strike = round(nifty_spot / 50) * 50
+        expiry_str = upstox.options_meta[0].get('expiry', '')
+
+        # Time to expiry in years
+        try:
+            expiry_date = datetime.strptime(expiry_str, '%d %b %Y').date()
+            today = datetime.now().date()
+            dte = max((expiry_date - today).days, 0)
+        except Exception:
+            dte = 1
+        T = max(dte / 365.0, 1 / 365.0)
+
+        r = 0.065  # risk-free rate (approx India 10yr)
+
+        def bs_price(S, K, T, r, sigma, opt_type):
+            d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+            d2 = d1 - sigma * math.sqrt(T)
+            def N(x):
+                return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+            if opt_type == 'CE':
+                return S * N(d1) - K * math.exp(-r * T) * N(d2)
+            else:
+                return K * math.exp(-r * T) * N(-d2) - S * N(-d1)
+
+        def calc_iv(market_price, S, K, T, r, opt_type):
+            """Newton-Raphson IV solver"""
+            if market_price <= 0 or S <= 0 or K <= 0 or T <= 0:
+                return None
+            intrinsic = max(S - K, 0) if opt_type == 'CE' else max(K - S, 0)
+            if market_price < intrinsic * 0.99:
+                return None
+            sigma = 0.3  # initial guess
+            for _ in range(100):
+                price = bs_price(S, K, T, r, sigma, opt_type)
+                d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+                vega = S * math.exp(-0.5 * d1 ** 2) / math.sqrt(2 * math.pi) * math.sqrt(T)
+                if vega < 1e-10:
+                    break
+                diff = price - market_price
+                sigma -= diff / vega
+                if sigma <= 0:
+                    sigma = 1e-6
+                if abs(diff) < 0.001:
+                    break
+            return round(sigma * 100, 2) if 0 < sigma < 5 else None
+
+        ce_data, pe_data = [], []
+
+        for meta in upstox.options_meta:
+            ikey = meta.get('instrument_key')
+            cached = upstox.options_cache.get(ikey, {}) if ikey else {}
+            ltp = cached.get('ltp', 0)
+            strike = meta['strike']
+            opt_type = meta['type']
+
+            iv = calc_iv(ltp, nifty_spot, strike, T, r, opt_type)
+
+            row = {
+                'strike': strike,
+                'type':   opt_type,
+                'label':  meta['label'],
+                'ltp':    ltp,
+                'iv':     iv,
+            }
+            if opt_type == 'CE':
+                ce_data.append(row)
+            else:
+                pe_data.append(row)
+
+        return jsonify({
+            'success':    True,
+            'nifty_spot': nifty_spot,
+            'atm_strike': atm_strike,
+            'expiry':     expiry_str,
+            'dte':        dte,
+            'calls':      sorted(ce_data, key=lambda r: r['strike']),
+            'puts':       sorted(pe_data, key=lambda r: r['strike']),
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/option-chain-full')
+def get_option_chain_full():
+    """Return full option chain paired by strike — CE on left, PE on right"""
+    if 'user_id' not in session or session['user_id'] not in authenticated_users:
+        return jsonify({'success': False}), 401
+
+    user_id = session['user_id']
+    upstox = authenticated_users[user_id]
+
+    try:
+        if not upstox.options_meta:
+            threading.Thread(target=upstox.subscribe_options_strikes, daemon=True).start()
+            return jsonify({'success': False, 'message': 'Options data loading — please retry in a few seconds'})
+
+        strikes = {}
+        for meta in upstox.options_meta:
+            strike = meta['strike']
+            ikey = meta.get('instrument_key')
+            cached = upstox.options_cache.get(ikey, {}) if ikey else {}
+            side = meta['type']  # 'CE' or 'PE'
+            if strike not in strikes:
+                strikes[strike] = {'ce': {}, 'pe': {}}
+            strikes[strike][side.lower()] = {
+                'ltp':    cached.get('ltp', 0),
+                'open':   cached.get('open', 0),
+                'high':   cached.get('high', 0),
+                'low':    cached.get('low', 0),
+                'close':  cached.get('cp', 0),
+                'volume': cached.get('volume', 0),
+                'oi':     cached.get('oi', 0),
+            }
+
+        nifty_spot = upstox.nifty_spot_ltp or upstox.prev_ltp
+        atm_strike = round(nifty_spot / 50) * 50 if nifty_spot else None
+        expiry = upstox.options_meta[0].get('expiry', '—') if upstox.options_meta else '—'
+
+        rows = []
+        for strike in sorted(strikes.keys()):
+            rows.append({
+                'strike': strike,
+                'is_atm': strike == atm_strike,
+                'ce': strikes[strike].get('ce', {}),
+                'pe': strikes[strike].get('pe', {}),
+            })
+
+        return jsonify({
+            'success':    True,
+            'nifty_spot': nifty_spot,
+            'atm_strike': atm_strike,
+            'expiry':     expiry,
+            'rows':       rows,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @app.route('/logout')
 def logout():
     if 'user_id' in session:
