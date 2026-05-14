@@ -152,7 +152,7 @@ On login, the app subscribes to:
 2. **NIFTY 50 spot index** — `NSE_INDEX|Nifty 50`, mode `ltpc`
 3. **NIFTY options** — 13 strikes (ATM-300 to ATM+300), both CE and PE, mode `full`
 
-**ATM Monitor thread** — runs every 10 seconds, re-subscribes options if ATM strike shifts by 50 pts (with 15pt hysteresis buffer). Clears stale cache for dropped strikes.
+**ATM Monitor thread** — runs every 10 seconds, re-subscribes options if ATM strike shifts by 50 pts (with 15pt hysteresis buffer). Has a 30-second cooldown between re-subscriptions and waits up to 30s for NIFTY spot on startup to prevent rapid-fire re-subscription loops.
 
 ---
 
@@ -186,11 +186,12 @@ On login, the app subscribes to:
 | `/api/live-data` | GET | Latest live data snapshot |
 | `/api/change-instrument` | POST | Switch futures instrument + lot size |
 | `/api/change-timeframe` | POST | Switch chart timeframe |
-| `/api/options-chain` | GET | NIFTY options chain from WebSocket cache |
+| `/api/options-chain` | GET | NIFTY options chain from WebSocket cache, includes T2 (SMA) and T3 (OI trend) signals |
 | `/api/straddle` | GET | Straddle premiums (CE+PE) per strike |
 | `/api/oi-tracker` | GET | OI + OI change % (5m/10m/15m/30m) for all subscribed options |
 | `/api/volatility-skew` | GET | Implied volatility per strike computed via Black-Scholes (Newton-Raphson solver) |
 | `/api/option-chain-full` | GET | Full option chain paired by strike — CE left, PE right, with OI, OHLC, LTP |
+| `/api/roc` | GET | Rate of change % of option LTP over 30s/1m/3m — rolling or fixed mode (`?mode=rolling\|fixed`) |
 
 ---
 
@@ -211,13 +212,32 @@ Six tabs at the bottom of the screen:
 
 ### ⚡ Options Chain Tab
 - NIFTY ATM/ITM options table
-- Columns: Type, Strike, Label, ATP, LTP, ATP-LTP, Open, High, Low, Volume, T1 trigger
+- Columns: Type, Strike, Label, ATP, LTP, ATP-LTP, Open, High, Low, Volume, T1, T2, T3
 - Auto-refreshes every 2 seconds from WebSocket cache
 - **Trigger 1 logic** — fires on an ITM option when ALL 3 conditions are met:
   1. Option is ITM (CE strike < ATM, or PE strike > ATM)
   2. LTP < ATP (trading below average price)
   3. `|ATP - LTP|` of this ITM row < `|ATP - LTP|` of the ATM row (same type)
   - Interpretation: ITM option is showing less discount to its average than ATM — signals relative strength/directional intent
+- **Trigger 2 logic** — SMA crossover on NIFTY futures closes, **per option type**:
+  - Queries last 8 completed 1-min candle closes from SQLite (excludes current open candle)
+  - `SMA5 = avg of last 5 closes`, `SMA8 = avg of last 8 closes`
+  - **CE rows:** T2 fires when `SMA5 > SMA8` (uptrend favours calls)
+  - **PE rows:** T2 fires when `SMA5 < SMA8` (downtrend favours puts)
+  - Shows ✅ badge (teal) on ITM rows when condition met, muted text on OTM
+  - Shows ⏳ until 8 candles have accumulated (~8 min after login)
+  - SMA5, SMA8 values and current trend shown in the header bar
+- **Trigger 3 logic** — OI decreasing per strike:
+  - Compares current OI against OI from 2 ticks ago using `oi_history`
+  - `oi_now < oi_2_ticks_ago` → 📉 OI ↓ badge (red) — position unwinding detected
+  - `oi_now >= oi_2_ticks_ago` → OI ↑ muted text
+  - Shows ⏳ until at least 3 OI ticks have arrived
+- **All-Triggers Log** — displayed below the table, inside the same scrollable panel:
+  - Logs an entry only when **T1 + T2 + T3 all fire simultaneously** on the same row
+  - Columns: Time (IST) | Strike | CE/PE | LTP
+  - Deduplication: same strike+type logs only once per minute
+  - Most recent entry at top, keeps last 50 entries
+  - Clear button to wipe the log manually
 
 ### 🎯 Straddle Tab
 - Header: NIFTY Spot, ATM strike, Expiry, Lowest straddle, Day Low/High
@@ -268,23 +288,45 @@ Six tabs at the bottom of the screen:
 - Auto-scrolls to ATM row on first load
 - Auto-refreshes every 3 seconds while tab is active
 
+### ⚡️ Rate of Change Tab
+- Two side-by-side tables: CALL (CE) and PUT (PE)
+- Header: NIFTY Spot, ATM, Expiry, mode dropdown
+- Columns per table: Strike | LTP | 30s % | 1m % | 3m %
+- **Two modes via dropdown:**
+  - **Rolling (sliding window):** `RoC % = ((ltp_now - ltp_T_ago) / ltp_T_ago) × 100` — always shows change vs exactly T seconds ago, updates every tick
+  - **Fixed (candle reset):** `RoC % = ((ltp_now - ltp_at_period_start) / ltp_at_period_start) × 100` — resets at each 30s/1m/3m boundary, like a candle
+- Green for positive, red for negative; bold when `|RoC| ≥ 5%`; background highlight when `|RoC| ≥ 10%`
+- Shows `—` until sufficient `ltp_history` has accumulated for each window
+- Auto-refreshes every 3 seconds while tab is active
+- Data sourced from `ltp_history` (per instrument key, rolling 5-min window recorded on every options tick)
+
+---
+
+## Footprint Alert
+
+- Alert threshold input in the chart toolbar — set a buy/sell qty value
+- 🔔 On / 🔕 Off toggle button — alert is off by default, must be enabled manually
+- Fires a **bell sound** (Web Audio API — two sine oscillators at 880 Hz + 2200 Hz with exponential decay) once per unique price level per candle
+- Tracks fired levels via `alertFiredLevels` Set — resets when candle timestamp changes
+- Turning off the toggle immediately stops any playing sound via `stopAlert()`
+
 ---
 
 ## OI Tracker — Backend Detail
 
 **Data source:** `fullFeed.marketFF.oi` field from Upstox WebSocket v3 `full` mode feed.
 
-**`options_cache`** (per instrument key) now includes:
+**`options_cache`** (per instrument key) includes:
 ```python
 {
     'ltp':    float,   # Last traded price
-    'cp':     float,   # Close price
+    'cp':     float,   # Close price (prev day)
     'atp':    float,   # Average traded price
     'volume': int,     # Volume traded today (VTT)
     'open':   float,   # Day open
     'high':   float,   # Day high
     'low':    float,   # Day low
-    'oi':     int,     # Open interest (NEW)
+    'oi':     int,     # Open interest
     'ts':     int,     # Timestamp ms
 }
 ```
@@ -294,7 +336,18 @@ Six tabs at the bottom of the screen:
 - Appended on every tick where `oi > 0`
 - Rolling 35-minute window (older entries pruned automatically)
 - Used by `/api/oi-tracker` to compute OI change % for 5m/10m/15m/30m intervals
-- Lookup: finds the closest historical entry within ±5 min of the target time
+- Used by `/api/options-chain` Trigger 3 to detect OI declining (compares last vs 2-ticks-ago)
+
+**`ltp_history`** (per instrument key):
+- List of `(timestamp_ms, ltp)` tuples
+- Appended on every options tick where `ltp > 0`
+- Rolling 5-minute window
+- Used by `/api/roc` to compute % change over 30s/1m/3m windows
+
+**`nifty_history`**:
+- List of `(timestamp_ms, spot)` tuples for NIFTY spot price
+- Rolling 5-minute window
+- Previously used for NIFTY-normalised RoC (now unused but retained)
 
 ---
 
@@ -309,6 +362,8 @@ Six tabs at the bottom of the screen:
 - IV capped at 0–500% range to filter solver divergence  
 
 ---
+
+## Footprint Logic
 
 **Method:** Intrabar  
 - `price > open` → Buy volume  
@@ -385,4 +440,4 @@ protobuf>=4.21.0
 
 ---
 
-*Last updated: 16 April 2026*
+*Last updated: 14 May 2026 (session 2)*

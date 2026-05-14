@@ -306,6 +306,7 @@
 
         <span class="filter-label">Alert</span>
         <input type="number" id="alertThreshold" class="filter-input" placeholder="0" min="0" value="0">
+        <button id="alertToggle" onclick="toggleAlert()" style="padding:2px 10px;font-size:11px;border-radius:4px;border:1px solid #555;background:#2a2a2a;color:#8b949e;cursor:pointer;" title="Toggle alert on/off">🔕 Off</button>
 
         <button id="horizontal-line" class="btn">📏 Line</button>
         <button id="fullscreen" class="btn">⛶ Full</button>
@@ -328,7 +329,7 @@
     <!-- Options Chain Panel -->
     <div id="options-panel">
         <div class="options-header">
-            <div>NIFTY Options &nbsp;|&nbsp; Expiry: <span id="opt-expiry">—</span> &nbsp;|&nbsp; NIFTY Spot: <span id="opt-nifty-ltp">—</span> &nbsp;|&nbsp; ATM: <span id="opt-atm">—</span></div>
+            <div>NIFTY Options &nbsp;|&nbsp; Expiry: <span id="opt-expiry">—</span> &nbsp;|&nbsp; NIFTY Spot: <span id="opt-nifty-ltp">—</span> &nbsp;|&nbsp; ATM: <span id="opt-atm">—</span> &nbsp;|&nbsp; SMA5: <span id="opt-sma5" style="color:#8b949e;">—</span> &nbsp; SMA8: <span id="opt-sma8" style="color:#8b949e;">—</span> &nbsp;|&nbsp; <span id="opt-t2-signal" style="font-size:11px;">—</span></div>
             <button class="btn" onclick="loadOptionsChain()" style="margin-left:auto;padding:4px 10px;font-size:11px;">↻ Refresh</button>
             <span id="opt-last-update" style="color:#555;font-size:11px;"></span>
         </div>
@@ -346,12 +347,35 @@
                     <th>Low</th>
                     <th>Volume</th>
                     <th>T1 [ATP-LTP ITM &lt; ATM]</th>
+                    <th>T2 [SMA5 &gt; SMA8]</th>
+                    <th>T3 [OI Decreasing]</th>
                 </tr>
             </thead>
             <tbody id="options-tbody">
-                <tr><td colspan="10" style="text-align:center;color:#555;padding:20px;">Click the Options tab to load data</td></tr>
+                <tr><td colspan="13" style="text-align:center;color:#555;padding:20px;">Click the Options tab to load data</td></tr>
             </tbody>
         </table>
+
+        <!-- All-Triggers Log -->
+        <div style="margin-top:16px;padding:0 2px;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                <span style="font-size:11px;font-weight:700;color:#f0b429;text-transform:uppercase;letter-spacing:0.8px;">🔔 All-Triggers Log (T1 + T2 + T3)</span>
+                <button onclick="triggerLog=[];renderTriggerLog();" style="padding:2px 8px;font-size:10px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:4px;cursor:pointer;">Clear</button>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:11px;max-width:500px;">
+                <thead>
+                    <tr style="background:#1a1f2e;">
+                        <th style="padding:5px 10px;text-align:left;color:#8b949e;border-bottom:1px solid #2B2B43;">Time</th>
+                        <th style="padding:5px 10px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Strike</th>
+                        <th style="padding:5px 10px;text-align:center;color:#8b949e;border-bottom:1px solid #2B2B43;">Type</th>
+                        <th style="padding:5px 10px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                    </tr>
+                </thead>
+                <tbody id="trigger-log-tbody">
+                    <tr><td colspan="4" style="text-align:center;color:#555;padding:12px;font-size:11px;">No signals yet — waiting for T1 + T2 + T3 to fire together</td></tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <!-- Straddle Panel -->
@@ -550,6 +574,66 @@
         </div>
     </div>
 
+    <!-- Rate of Change Panel -->
+    <div id="roc-panel" style="display:none;position:fixed;top:0;left:48px;right:0;bottom:36px;background:#131722;overflow:auto;z-index:999;padding:8px;padding-top:60px;box-sizing:border-box;">
+        <!-- Header -->
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+            <span style="color:#8b949e;font-size:12px;">NIFTY Spot: <strong id="roc-spot" style="color:#e6edf3;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">ATM: <strong id="roc-atm" style="color:#26a69a;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">Expiry: <span id="roc-expiry" style="color:#f0b429;">—</span></span>
+            <!-- Mode dropdown -->
+            <div style="display:flex;align-items:center;gap:6px;margin-left:8px;">
+                <label style="color:#8b949e;font-size:11px;">Mode:</label>
+                <select id="roc-mode" onchange="loadRoc()" style="background:#1e2130;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;">
+                    <option value="rolling">📊 Rolling (sliding window)</option>
+                    <option value="fixed">🕐 Fixed (candle reset)</option>
+                </select>
+            </div>
+            <span id="roc-mode-desc" style="color:#555;font-size:10px;"></span>
+            <button class="btn" onclick="loadRoc()" style="margin-left:auto;padding:4px 10px;font-size:11px;">↻ Refresh</button>
+            <span id="roc-last-update" style="color:#555;font-size:11px;"></span>
+        </div>
+        <!-- Two tables side by side -->
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <!-- CALL RoC -->
+            <div style="flex:1;min-width:340px;">
+                <div style="font-size:11px;font-weight:700;color:#26a69a;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">📈 CALL (CE) — Rate of Change %</div>
+                <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                    <thead>
+                        <tr style="background:#161b22;">
+                            <th style="padding:5px 8px;text-align:left;color:#8b949e;border-bottom:1px solid #2B2B43;">Strike</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;border-left:1px solid #2B2B43;">30s %</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;border-left:1px solid #2B2B43;">1m %</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;border-left:1px solid #2B2B43;">3m %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="roc-ce-tbody">
+                        <tr><td colspan="5" style="text-align:center;color:#555;padding:20px;">Click Rate of Change tab to load</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <!-- PUT RoC -->
+            <div style="flex:1;min-width:340px;">
+                <div style="font-size:11px;font-weight:700;color:#ef5350;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">📉 PUT (PE) — Rate of Change %</div>
+                <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                    <thead>
+                        <tr style="background:#161b22;">
+                            <th style="padding:5px 8px;text-align:left;color:#8b949e;border-bottom:1px solid #2B2B43;">Strike</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;border-left:1px solid #2B2B43;">30s %</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;border-left:1px solid #2B2B43;">1m %</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;border-left:1px solid #2B2B43;">3m %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="roc-pe-tbody">
+                        <tr><td colspan="5" style="text-align:center;color:#555;padding:20px;">Click Rate of Change tab to load</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <!-- Tab Navigation -->
     <div class="tab-nav">
         <button class="tab-btn active" id="tab-chart" onclick="switchTab('chart')" title="Chart">📈</button>
@@ -558,6 +642,7 @@
         <button class="tab-btn" id="tab-oi" onclick="switchTab('oi')" title="OI Tracker">📊</button>
         <button class="tab-btn" id="tab-skew" onclick="switchTab('skew')" title="Volatility Skew">📉</button>
         <button class="tab-btn" id="tab-chain" onclick="switchTab('chain')" title="Option Chain">🔗</button>
+        <button class="tab-btn" id="tab-roc" onclick="switchTab('roc')" title="Rate of Change">⚡️</button>
     </div>
 
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -579,6 +664,26 @@
         let selectedLineIndex = -1;
         let alertAudio = null;
         let alertTimeout = null;
+        let alertLastCandleTs = null;  // tracks current candle timestamp
+        let alertFiredLevels = new Set(); // tracks price levels that already fired in current candle
+        let alertEnabled = false; // alert is off by default
+
+        function toggleAlert() {
+            alertEnabled = !alertEnabled;
+            const btn = document.getElementById('alertToggle');
+            if (alertEnabled) {
+                btn.textContent = '🔔 On';
+                btn.style.background = 'rgba(38,166,154,0.2)';
+                btn.style.borderColor = '#26a69a';
+                btn.style.color = '#26a69a';
+            } else {
+                btn.textContent = '🔕 Off';
+                btn.style.background = '#2a2a2a';
+                btn.style.borderColor = '#555';
+                btn.style.color = '#8b949e';
+                stopAlert();
+            }
+        }
 
         const drawFootprint = () => {
             if (!footprintCtx || !chart || !footprintEnabled || liveData.length === 0) {
@@ -734,9 +839,21 @@
 
                         // Check alert threshold
                         const alertThreshold = parseInt(document.getElementById('alertThreshold').value) || 0;
-                        if (alertThreshold > 0 && !data.historical) {
+                        if (alertEnabled && alertThreshold > 0 && !data.historical) {
                             if (level.buy_qty >= alertThreshold || level.sell_qty >= alertThreshold) {
-                                playAlert();
+                                const candleTs = data.timestamp || null;
+                                // Reset fired levels when a new candle starts
+                                if (candleTs !== alertLastCandleTs) {
+                                    alertLastCandleTs = candleTs;
+                                    alertFiredLevels.clear();
+                                }
+                                // Fire once per price level per candle
+                                const levelKey = `${level.price}_${level.buy_qty >= alertThreshold ? 'b' : 's'}`;
+                                if (!alertFiredLevels.has(levelKey)) {
+                                    alertFiredLevels.add(levelKey);
+                                    stopAlert();
+                                    playAlert();
+                                }
                             }
                         }
 
@@ -822,30 +939,60 @@
             return num.toString();
         }
 
-        // Play alert sound for 3 seconds
+        // Play alert sound — bell tone with natural decay
+        let alertOscillator = null;
+        let alertGainNode = null;
+        let alertAudioContext = null;
+
         function playAlert() {
-            if (alertTimeout) return; // Already playing
-            
-            // Create audio context and oscillator for beep sound
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            const oscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
-            
-            oscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-            
-            oscillator.frequency.value = 800; // 800 Hz beep
-            oscillator.type = 'sine';
-            gainNode.gain.value = 0.3;
-            
-            oscillator.start();
-            
-            // Stop after 3 seconds
+            // Stop any currently playing sound first
+            stopAlert();
+
+            alertAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+            // Bell uses two oscillators (fundamental + harmonic) for a richer tone
+            const osc1 = alertAudioContext.createOscillator();
+            const osc2 = alertAudioContext.createOscillator();
+            const gain = alertAudioContext.createGain();
+
+            osc1.connect(gain);
+            osc2.connect(gain);
+            gain.connect(alertAudioContext.destination);
+
+            // Bell frequencies: fundamental ~880 Hz + harmonic ~2200 Hz
+            osc1.type = 'sine';
+            osc1.frequency.value = 880;
+            osc2.type = 'sine';
+            osc2.frequency.value = 2200;
+
+            // Bell envelope: sharp attack, exponential decay (natural bell shape)
+            const now = alertAudioContext.currentTime;
+            gain.gain.setValueAtTime(0, now);
+            gain.gain.linearRampToValueAtTime(0.5, now + 0.01);   // sharp attack
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5); // decay over 1.5s
+
+            osc1.start(now);
+            osc2.start(now);
+            osc1.stop(now + 1.5);
+            osc2.stop(now + 1.5);
+
+            alertOscillator = osc1;
+            alertGainNode = gain;
+
             alertTimeout = setTimeout(() => {
-                oscillator.stop();
-                audioContext.close();
-                alertTimeout = null;
-            }, 3000);
+                stopAlert();
+            }, 1600);
+        }
+
+        function stopAlert() {
+            if (alertTimeout) { clearTimeout(alertTimeout); alertTimeout = null; }
+            try {
+                if (alertOscillator) { alertOscillator.stop(); alertOscillator = null; }
+            } catch(e) {}
+            try {
+                if (alertAudioContext) { alertAudioContext.close(); alertAudioContext = null; }
+            } catch(e) {}
+            alertGainNode = null;
         }
 
 
@@ -1388,6 +1535,9 @@
         let skewRefreshTimer = null;
         let skewChart = null;
         let chainRefreshTimer = null;
+        let rocRefreshTimer = null;
+        let triggerLog = [];           // [{time, strike, type, ltp}, ...]
+        let triggerLogSeen = new Set(); // dedup key: strike_type within same minute
         let activeTab = 'chart';
 
         function startBackgroundPolling() {
@@ -1413,11 +1563,13 @@
             document.getElementById('tab-oi').classList.toggle('active', tab === 'oi');
             document.getElementById('tab-skew').classList.toggle('active', tab === 'skew');
             document.getElementById('tab-chain').classList.toggle('active', tab === 'chain');
+            document.getElementById('tab-roc').classList.toggle('active', tab === 'roc');
             document.getElementById('options-panel').classList.toggle('visible', tab === 'options');
             document.getElementById('straddle-panel').style.display = (tab === 'straddle') ? 'flex' : 'none';
             document.getElementById('oi-panel').style.display = (tab === 'oi') ? 'block' : 'none';
             document.getElementById('skew-panel').style.display = (tab === 'skew') ? 'block' : 'none';
             document.getElementById('chain-panel').style.display = (tab === 'chain') ? 'block' : 'none';
+            document.getElementById('roc-panel').style.display = (tab === 'roc') ? 'block' : 'none';
 
             if (tab === 'skew' && !skewRefreshTimer) {
                 loadSkew();
@@ -1435,6 +1587,14 @@
                 clearInterval(chainRefreshTimer);
                 chainRefreshTimer = null;
             }
+            if (tab === 'roc' && !rocRefreshTimer) {
+                loadRoc();
+                rocRefreshTimer = setInterval(loadRoc, 3000);
+            }
+            if (tab !== 'roc' && rocRefreshTimer) {
+                clearInterval(rocRefreshTimer);
+                rocRefreshTimer = null;
+            }
         }
 
         async function loadOptionsChain() {
@@ -1444,7 +1604,7 @@
 
                 if (!result.success) {
                     document.getElementById('options-tbody').innerHTML =
-                        `<tr><td colspan="10" style="text-align:center;color:#ef5350;padding:20px;">${result.message || 'Failed to load'}</td></tr>`;
+                        `<tr><td colspan="13" style="text-align:center;color:#ef5350;padding:20px;">${result.message || 'Failed to load'}</td></tr>`;
                     return;
                 }
 
@@ -1452,6 +1612,27 @@
                 document.getElementById('opt-nifty-ltp').textContent = result.nifty_ltp ? result.nifty_ltp.toFixed(2) : '—';
                 document.getElementById('opt-atm').textContent = result.atm_strike || '—';
                 document.getElementById('opt-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+                // Trigger 2 — SMA header
+                const t2 = result.trigger2 || {};
+                const sma5El = document.getElementById('opt-sma5');
+                const sma8El = document.getElementById('opt-sma8');
+                const t2sigEl = document.getElementById('opt-t2-signal');
+                sma5El.textContent = t2.sma5 != null ? t2.sma5.toFixed(2) : '—';
+                sma8El.textContent = t2.sma8 != null ? t2.sma8.toFixed(2) : '—';
+                if (t2.signal === true) {
+                    sma5El.style.color = '#26a69a'; sma8El.style.color = '#26a69a';
+                    t2sigEl.textContent = '📈 CE: SMA5 > SMA8 | 📉 PE: needs SMA5 < SMA8';
+                    t2sigEl.style.color = '#26a69a';
+                } else if (t2.signal === false) {
+                    sma5El.style.color = '#ef5350'; sma8El.style.color = '#ef5350';
+                    t2sigEl.textContent = '📉 PE: SMA5 < SMA8 | 📈 CE: needs SMA5 > SMA8';
+                    t2sigEl.style.color = '#ef5350';
+                } else {
+                    sma5El.style.color = '#8b949e'; sma8El.style.color = '#8b949e';
+                    t2sigEl.textContent = '⏳ Insufficient data';
+                    t2sigEl.style.color = '#555';
+                }
 
                 const rows = (result.data || []).filter(r =>
                     (r.type === 'CE' && r.strike <= result.atm_strike) ||
@@ -1470,25 +1651,28 @@
 
                 let html = '';
 
-                html += `<tr class="section-divider"><td colspan="10">── CALL OPTIONS (CE) ──</td></tr>`;
+                html += `<tr class="section-divider"><td colspan="13">── CALL OPTIONS (CE) ──</td></tr>`;
                 ceRows.forEach(row => {
-                    html += buildRow(row, result.atm_strike, atmDiff);
+                    html += buildRow(row, result.atm_strike, atmDiff, t2.signal);
                 });
 
-                html += `<tr class="section-divider"><td colspan="10">── PUT OPTIONS (PE) ──</td></tr>`;
+                html += `<tr class="section-divider"><td colspan="13">── PUT OPTIONS (PE) ──</td></tr>`;
                 peRows.forEach(row => {
-                    html += buildRow(row, result.atm_strike, atmDiff);
+                    html += buildRow(row, result.atm_strike, atmDiff, t2.signal);
                 });
 
                 document.getElementById('options-tbody').innerHTML = html;
 
+                // ── All-Triggers Log ──────────────────────────────────
+                checkAllTriggers(ceRows.concat(peRows), result.atm_strike, atmDiff, t2.signal);
+
             } catch (e) {
                 document.getElementById('options-tbody').innerHTML =
-                    `<tr><td colspan="10" style="text-align:center;color:#ef5350;padding:20px;">Error: ${e.message}</td></tr>`;
+                    `<tr><td colspan="13" style="text-align:center;color:#ef5350;padding:20px;">Error: ${e.message}</td></tr>`;
             }
         }
 
-        function buildRow(row, atmStrike, atmDiff) {
+        function buildRow(row, atmStrike, atmDiff, t2signal) {
             const isAtm = row.strike === atmStrike;
             const typeClass = row.type === 'CE' ? 'badge-ce' : 'badge-pe';
             const fmt = v => (v != null && v !== 0) ? v.toFixed(2) : '—';
@@ -1518,6 +1702,32 @@
                 ? `<span class="trigger-badge">Trigger 1</span>`
                 : '';
 
+            // Trigger 2: SMA5 > SMA8 for CE (bullish), SMA5 < SMA8 for PE (bearish)
+            let trigger2Html = '—';
+            const t2fires = (row.type === 'CE' && t2signal === true) ||
+                            (row.type === 'PE' && t2signal === false);
+            const t2label = row.type === 'CE' ? 'SMA5 > SMA8' : 'SMA5 < SMA8';
+            if (t2signal === null || t2signal === undefined) {
+                trigger2Html = `<span style="color:#333;font-size:10px;">⏳</span>`;
+            } else if (t2fires) {
+                trigger2Html = isItm
+                    ? `<span class="trigger-badge" style="background:rgba(38,166,154,0.2);color:#26a69a;border:1px solid #26a69a;">✅ ${t2label}</span>`
+                    : `<span style="color:#555;font-size:10px;">✅ ${t2label}</span>`;
+            } else {
+                const oppLabel = row.type === 'CE' ? 'SMA5 < SMA8' : 'SMA5 > SMA8';
+                trigger2Html = `<span style="color:#555;font-size:10px;">${oppLabel}</span>`;
+            }
+
+            // Trigger 3: OI Decreasing
+            let trigger3Html = '—';
+            if (row.oi_decreasing === true) {
+                trigger3Html = `<span class="trigger-badge" style="background:rgba(239,83,80,0.2);color:#ef5350;border:1px solid #ef5350;">📉 OI ↓</span>`;
+            } else if (row.oi_decreasing === false) {
+                trigger3Html = `<span style="color:#555;font-size:10px;">OI ↑</span>`;
+            } else {
+                trigger3Html = `<span style="color:#333;font-size:10px;">⏳</span>`;
+            }
+
             return `<tr class="${isAtm ? 'atm-row' : ''}">
                 <td><span class="${typeClass}">${row.type}</span></td>
                 <td>${row.strike}</td>
@@ -1530,8 +1740,67 @@
                 <td>${fmt(row.low)}</td>
                 <td>${fmtVol(row.volume)}</td>
                 <td>${trigger1Html}</td>
+                <td>${trigger2Html}</td>
+                <td>${trigger3Html}</td>
             </tr>`;
         }
+
+        function checkAllTriggers(rows, atmStrike, atmDiff, t2signal) {
+            if (t2signal === null || t2signal === undefined) return; // need SMA data
+            const nowMin = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
+
+            rows.forEach(row => {
+                // T2 check — per type: CE needs bullish (SMA5>SMA8), PE needs bearish (SMA5<SMA8)
+                const t2 = (row.type === 'CE' && t2signal === true) ||
+                           (row.type === 'PE' && t2signal === false);
+                if (!t2) return;
+                // T1 check
+                const isItm = (row.type === 'CE' && row.strike < atmStrike) || (row.type === 'PE' && row.strike > atmStrike);
+                const atm_diff_val = atmDiff ? atmDiff[row.type] : null;
+                const priceBelowAtp = row.ltp > 0 && row.atp > 0 && row.ltp < row.atp;
+                const itmDiffLessThanAtm = row.atp_minus_ltp != null && atm_diff_val != null
+                    && Math.abs(row.atp_minus_ltp) < Math.abs(atm_diff_val);
+                const t1 = isItm && priceBelowAtp && itmDiffLessThanAtm;
+
+                // T3 check
+                const t3 = row.oi_decreasing === true;
+
+                if (!t1 || !t3) return; // all three must fire
+
+                // Dedup: only log once per strike+type per minute
+                const key = `${row.strike}_${row.type}_${nowMin}`;
+                if (triggerLogSeen.has(key)) return;
+                triggerLogSeen.add(key);
+
+                const timeStr = new Date().toLocaleTimeString('en-IN', {
+                    timeZone: 'Asia/Kolkata',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit'
+                });
+                triggerLog.unshift({ time: timeStr, strike: row.strike, type: row.type, ltp: row.ltp });
+                if (triggerLog.length > 50) triggerLog.pop(); // keep last 50
+            });
+
+            renderTriggerLog();
+        }
+
+        function renderTriggerLog() {
+            const tbody = document.getElementById('trigger-log-tbody');
+            if (!tbody) return;
+            if (triggerLog.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#555;padding:12px;font-size:11px;">No signals yet — waiting for T1 + T2 + T3 to fire together</td></tr>';
+                return;
+            }
+            tbody.innerHTML = triggerLog.map(e => {
+                const typeColor = e.type === 'CE' ? '#26a69a' : '#ef5350';
+                return `<tr style="border-bottom:1px solid #1a1f2e;">
+                    <td style="padding:5px 10px;color:#8b949e;">${e.time}</td>
+                    <td style="padding:5px 10px;text-align:right;color:#f0b429;font-weight:700;">${e.strike}</td>
+                    <td style="padding:5px 10px;text-align:center;"><span style="background:${typeColor}22;color:${typeColor};border:1px solid ${typeColor};border-radius:3px;padding:1px 6px;font-size:10px;font-weight:700;">${e.type}</span></td>
+                    <td style="padding:5px 10px;text-align:right;color:#c9d1d9;">₹${e.ltp > 0 ? e.ltp.toFixed(2) : '—'}</td>
+                </tr>`;
+            }).join('');
+        }
+
         // ── Straddle Tab ───────────────────────────────────────────────
         let straddleChart = null;
         let straddleChartData = { labels: [], data: [] };
@@ -1582,6 +1851,72 @@
                 document.getElementById('oi-pe-tbody').innerHTML = result.puts.map(r => buildOIRow(r, result.atm_strike)).join('') || '<tr><td colspan="8" style="text-align:center;color:#555;padding:20px;">No data</td></tr>';
             } catch(e) {
                 console.error('OI Tracker load error:', e);
+            }
+        }
+
+        // ── Rate of Change Tab ──────────────────────────────────────────
+        async function loadRoc() {
+            const mode = document.getElementById('roc-mode')?.value || 'rolling';
+
+            // Update description text
+            const desc = document.getElementById('roc-mode-desc');
+            if (desc) desc.textContent = mode === 'rolling'
+                ? 'Rolling: % change vs exactly T seconds ago, updates every tick'
+                : 'Fixed: % change since start of current 30s / 1m / 3m period, resets at each boundary';
+
+            try {
+                const resp = await fetch(`/api/roc?mode=${mode}`);
+                const result = await resp.json();
+                if (!result.success) {
+                    const msg = `<tr><td colspan="5" style="text-align:center;color:#ef5350;padding:20px;">${result.message || 'Failed to load'}</td></tr>`;
+                    document.getElementById('roc-ce-tbody').innerHTML = msg;
+                    document.getElementById('roc-pe-tbody').innerHTML = msg;
+                    return;
+                }
+
+                document.getElementById('roc-spot').textContent = result.nifty_spot ? result.nifty_spot.toFixed(2) : '—';
+                document.getElementById('roc-atm').textContent = result.atm_strike || '—';
+                document.getElementById('roc-expiry').textContent = result.expiry || '—';
+                document.getElementById('roc-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+                const windows = ['30s', '1m', '3m'];
+
+                function rocCell(pct) {
+                    if (pct === null || pct === undefined) {
+                        return `<td style="padding:5px 8px;text-align:right;color:#333;border-left:1px solid #1e2130;">—</td>`;
+                    }
+                    const color = pct > 0 ? '#26a69a' : pct < 0 ? '#ef5350' : '#8b949e';
+                    const fw = Math.abs(pct) >= 5 ? 'font-weight:700;' : '';
+                    // Background pulse for big moves (>= 10%)
+                    const bg = Math.abs(pct) >= 10
+                        ? (pct > 0 ? 'background:rgba(38,166,154,0.15);' : 'background:rgba(239,83,80,0.15);')
+                        : '';
+                    const sign = pct > 0 ? '+' : '';
+                    return `<td style="padding:5px 8px;text-align:right;color:${color};${fw}${bg}border-left:1px solid #1e2130;">${sign}${pct.toFixed(2)}%</td>`;
+                }
+
+                function buildRocRow(row, atm) {
+                    const isAtm = row.strike === atm;
+                    const bg = isAtm ? 'background:rgba(240,180,41,0.08);' : '';
+                    const fw = isAtm ? 'font-weight:700;' : '';
+                    const strikeColor = isAtm ? '#f0b429' : '#c9d1d9';
+
+                    return `<tr style="${bg}border-bottom:1px solid #1a1f2e;">
+                        <td style="padding:5px 8px;${fw}color:${strikeColor};">${row.strike}${isAtm ? ' ◀' : ''}</td>
+                        <td style="padding:5px 8px;text-align:right;${fw}color:#c9d1d9;">₹${row.ltp > 0 ? row.ltp.toFixed(2) : '—'}</td>
+                        ${windows.map(w => rocCell(row.roc ? row.roc[w] : null)).join('')}
+                    </tr>`;
+                }
+
+                document.getElementById('roc-ce-tbody').innerHTML =
+                    result.calls.map(r => buildRocRow(r, result.atm_strike)).join('') ||
+                    '<tr><td colspan="5" style="text-align:center;color:#555;padding:20px;">No data</td></tr>';
+                document.getElementById('roc-pe-tbody').innerHTML =
+                    result.puts.map(r => buildRocRow(r, result.atm_strike)).join('') ||
+                    '<tr><td colspan="5" style="text-align:center;color:#555;padding:20px;">No data</td></tr>';
+
+            } catch(e) {
+                console.error('RoC load error:', e);
             }
         }
 
