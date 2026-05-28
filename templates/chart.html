@@ -24,7 +24,7 @@
         .controls {
             position: fixed;
             top: 0;
-            left: 0;
+            left: 48px;
             right: 0;
             background: rgba(43, 43, 67, 0.95);
             backdrop-filter: blur(10px);
@@ -97,8 +97,9 @@
 
         #chart-container {
             position: relative;
-            width: 100vw;
-            height: 100vh;
+            width: calc(100vw - 48px);
+            margin-left: 48px;
+            height: calc(100vh - 36px);
         }
 
         #overlay-container {
@@ -137,6 +138,146 @@
             font-size: 12px;
             cursor: pointer;
         }
+
+        /* Tab navigation */
+        .tab-nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 48px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 8px;
+            gap: 4px;
+            background: rgba(19, 23, 34, 0.97);
+            border-right: 1px solid #2B2B43;
+            z-index: 1000;
+        }
+        .tab-btn {
+            width: 40px;
+            height: 40px;
+            padding: 0;
+            background: transparent;
+            color: #888;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            border-left: 2px solid transparent;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .tab-btn.active {
+            color: #26a69a;
+            background: rgba(38, 166, 154, 0.12);
+            border-left-color: #26a69a;
+        }
+
+        /* Options panel */
+        #options-panel {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 48px;
+            right: 0;
+            bottom: 0;
+            background: #131722;
+            overflow-y: auto;
+            z-index: 999;
+            padding: 8px;
+            padding-top: 60px;
+        }
+        #options-panel.visible { display: block; }
+
+        .options-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #888;
+        }
+        .options-header span { color: #d1d4dc; font-weight: 600; }
+
+        .options-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .options-table th {
+            background: #1e2130;
+            color: #888;
+            padding: 8px 10px;
+            text-align: right;
+            border-bottom: 1px solid #2B2B43;
+            white-space: nowrap;
+        }
+        .options-table th:first-child,
+        .options-table th:nth-child(2),
+        .options-table th:nth-child(3) { text-align: left; }
+
+        .options-table td {
+            padding: 7px 10px;
+            text-align: right;
+            border-bottom: 1px solid #1e2130;
+            color: #d1d4dc;
+        }
+        .options-table td:first-child,
+        .options-table td:nth-child(2),
+        .options-table td:nth-child(3) { text-align: left; }
+
+        .options-table tr:hover td { background: #1a1f2e; }
+        .options-table tr.atm-row td { background: rgba(38, 166, 154, 0.08); }
+        .options-table tr.atm-row td:nth-child(2) { color: #26a69a; font-weight: 600; }
+
+        .badge-ce { color: #26a69a; font-weight: 600; }
+        .badge-pe { color: #ef5350; font-weight: 600; }
+
+        .diff-pos { color: #26a69a; }
+        .diff-neg { color: #ef5350; }
+        .diff-zero { color: #888; }
+
+        .section-divider td {
+            background: #1a1f2e;
+            color: #555;
+            font-size: 11px;
+            padding: 4px 10px;
+            text-align: center;
+            letter-spacing: 1px;
+        }
+
+        .trigger-badge {
+            display: inline-block;
+            background: #1a3a5c;
+            color: #4fc3f7;
+            border: 1px solid #4fc3f7;
+            border-radius: 3px;
+            padding: 2px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
+        @keyframes oi-pulse {
+            0%   { opacity: 1; }
+            50%  { opacity: 0.55; }
+            100% { opacity: 1; }
+        }
+        .oi-spike-up {
+            background: rgba(38,166,154,0.25) !important;
+            border: 1px solid rgba(38,166,154,0.6);
+            border-radius: 3px;
+            animation: oi-pulse 1.5s infinite;
+        }
+        .oi-spike-down {
+            background: rgba(239,83,80,0.25) !important;
+            border: 1px solid rgba(239,83,80,0.6);
+            border-radius: 3px;
+            animation: oi-pulse 1.5s infinite;
+        }
     </style>
 </head>
 
@@ -165,6 +306,7 @@
 
         <span class="filter-label">Alert</span>
         <input type="number" id="alertThreshold" class="filter-input" placeholder="0" min="0" value="0">
+        <button id="alertToggle" onclick="toggleAlert()" style="padding:2px 10px;font-size:11px;border-radius:4px;border:1px solid #555;background:#2a2a2a;color:#8b949e;cursor:pointer;" title="Toggle alert on/off">🔕 Off</button>
 
         <button id="horizontal-line" class="btn">📏 Line</button>
         <button id="fullscreen" class="btn">⛶ Full</button>
@@ -184,8 +326,331 @@
         </div>
     </div>
 
+    <!-- Options Chain Panel -->
+    <div id="options-panel">
+        <div class="options-header">
+            <div>NIFTY Options &nbsp;|&nbsp; Expiry: <span id="opt-expiry">—</span> &nbsp;|&nbsp; NIFTY Spot: <span id="opt-nifty-ltp">—</span> &nbsp;|&nbsp; ATM: <span id="opt-atm">—</span> &nbsp;|&nbsp; SMA5: <span id="opt-sma5" style="color:#8b949e;">—</span> &nbsp; SMA8: <span id="opt-sma8" style="color:#8b949e;">—</span> &nbsp;|&nbsp; <span id="opt-t2-signal" style="font-size:11px;">—</span></div>
+            <button class="btn" onclick="loadOptionsChain()" style="margin-left:auto;padding:4px 10px;font-size:11px;">↻ Refresh</button>
+            <span id="opt-last-update" style="color:#555;font-size:11px;"></span>
+        </div>
+        <table class="options-table">
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Strike</th>
+                    <th>Label</th>
+                    <th>ATP</th>
+                    <th>LTP</th>
+                    <th>ATP - LTP</th>
+                    <th>Open</th>
+                    <th>High</th>
+                    <th>Low</th>
+                    <th>Volume</th>
+                    <th>T1 [ATP-LTP ITM &lt; ATM]</th>
+                    <th>T2 [SMA5 &gt; SMA8]</th>
+                    <th>T3 [OI Decreasing]</th>
+                </tr>
+            </thead>
+            <tbody id="options-tbody">
+                <tr><td colspan="13" style="text-align:center;color:#555;padding:20px;">Click the Options tab to load data</td></tr>
+            </tbody>
+        </table>
+
+        <!-- All-Triggers Log -->
+        <div style="margin-top:16px;padding:0 2px;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                <span style="font-size:11px;font-weight:700;color:#f0b429;text-transform:uppercase;letter-spacing:0.8px;">🔔 All-Triggers Log (T1 + T2 + T3)</span>
+                <button onclick="triggerLog=[];renderTriggerLog();" style="padding:2px 8px;font-size:10px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:4px;cursor:pointer;">Clear</button>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:11px;max-width:500px;">
+                <thead>
+                    <tr style="background:#1a1f2e;">
+                        <th style="padding:5px 10px;text-align:left;color:#8b949e;border-bottom:1px solid #2B2B43;">Time</th>
+                        <th style="padding:5px 10px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Strike</th>
+                        <th style="padding:5px 10px;text-align:center;color:#8b949e;border-bottom:1px solid #2B2B43;">Type</th>
+                        <th style="padding:5px 10px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                    </tr>
+                </thead>
+                <tbody id="trigger-log-tbody">
+                    <tr><td colspan="4" style="text-align:center;color:#555;padding:12px;font-size:11px;">No signals yet — waiting for T1 + T2 + T3 to fire together</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Straddle Panel -->
+    <div id="straddle-panel" style="display:none;position:fixed;top:0;left:48px;right:0;bottom:0;background:#131722;overflow:hidden;z-index:999;padding:8px;padding-top:60px;box-sizing:border-box;flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;flex-shrink:0;">
+            <span style="color:#8b949e;font-size:12px;">NIFTY Spot: <strong id="st-spot" style="color:#e6edf3;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">ATM: <strong id="st-atm" style="color:#26a69a;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">Expiry: <span id="st-expiry">—</span></span>
+            <span style="color:#8b949e;font-size:12px;">Lowest: <strong id="st-lowest" style="color:#f0b429;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">Day Low: <span id="st-day-low" style="color:#26a69a;">—</span> &nbsp; Day High: <span id="st-day-high" style="color:#ef5350;">—</span></span>
+            <button class="btn" onclick="loadStraddle()" style="margin-left:auto;padding:4px 10px;font-size:11px;">↻ Refresh</button>
+            <span id="st-last-update" style="color:#555;font-size:11px;"></span>
+        </div>
+
+        <!-- Premium spike alert bar -->
+        <div id="st-alert-bar" style="display:none;background:rgba(240,180,41,0.15);border:1px solid rgba(240,180,41,0.4);border-radius:6px;padding:6px 12px;margin-bottom:8px;color:#f0b429;font-size:12px;flex-shrink:0;"></div>
+
+        <div style="display:flex;gap:8px;flex:1;min-height:0;">
+            <!-- Straddle table -->
+            <div style="flex:0 0 260px;background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden;display:flex;flex-direction:column;">
+                <div style="padding:8px 12px;border-bottom:1px solid #21262d;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
+                    <span style="font-size:11px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:0.8px;">Strike</span>
+                    <span style="font-size:11px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:0.8px;">CE + PE = Straddle</span>
+                </div>
+                <div style="overflow-y:auto;flex:1;">
+                    <table style="width:100%;border-collapse:collapse;" id="st-table">
+                        <tbody id="st-tbody">
+                            <tr><td colspan="4" style="text-align:center;color:#555;padding:20px;font-size:12px;">Click Straddle tab to load</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Premium chart -->
+            <div style="flex:1;min-width:280px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px;display:flex;flex-direction:column;">
+                <div style="font-size:11px;color:#8b949e;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
+                <span>ATM Straddle Premium — Live</span>
+                <button onclick="if(straddleChart){ straddleZoomed=false; straddleChart.resetZoom(); straddleChart.update('none'); }" style="padding:2px 8px;font-size:10px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:4px;cursor:pointer;">Reset Zoom</button>
+            </div>
+                <canvas id="st-chart" style="width:100%;flex:1;min-height:0;"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- OI Tracker Panel -->
+    <div id="oi-panel" style="display:none;position:fixed;top:0;left:48px;right:0;bottom:36px;background:#131722;overflow:auto;z-index:999;padding:8px;padding-top:60px;box-sizing:border-box;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+            <span style="color:#8b949e;font-size:12px;">NIFTY Spot: <strong id="oi-spot" style="color:#e6edf3;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">ATM: <strong id="oi-atm" style="color:#26a69a;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">Expiry: <span id="oi-expiry">—</span></span>
+            <button class="btn" onclick="loadOITracker()" style="margin-left:auto;padding:4px 10px;font-size:11px;">↻ Refresh</button>
+            <span id="oi-last-update" style="color:#555;font-size:11px;"></span>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+            <!-- CALL OI Table -->
+            <div style="flex:1;min-width:320px;">
+                <div style="font-size:11px;font-weight:700;color:#26a69a;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">📈 CALL Options (CE)</div>
+                <table style="width:100%;border-collapse:collapse;font-size:11px;" id="oi-ce-table">
+                    <thead>
+                        <tr style="background:#1e2130;">
+                            <th style="padding:6px 8px;text-align:left;color:#8b949e;border-bottom:1px solid #2B2B43;">Strike</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">OI</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Volume</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">5m %</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">10m %</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">15m %</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">30m %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="oi-ce-tbody">
+                        <tr><td colspan="8" style="text-align:center;color:#555;padding:20px;">Click OI Tracker tab to load</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <!-- PUT OI Table -->
+            <div style="flex:1;min-width:320px;">
+                <div style="font-size:11px;font-weight:700;color:#ef5350;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">📉 PUT Options (PE)</div>
+                <table style="width:100%;border-collapse:collapse;font-size:11px;" id="oi-pe-table">
+                    <thead>
+                        <tr style="background:#1e2130;">
+                            <th style="padding:6px 8px;text-align:left;color:#8b949e;border-bottom:1px solid #2B2B43;">Strike</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">OI</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Volume</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">5m %</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">10m %</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">15m %</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">30m %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="oi-pe-tbody">
+                        <tr><td colspan="8" style="text-align:center;color:#555;padding:20px;">Click OI Tracker tab to load</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Volatility Skew Panel -->
+    <div id="skew-panel" style="display:none;position:fixed;top:0;left:48px;right:0;bottom:36px;background:#131722;overflow:auto;z-index:999;padding:8px;padding-top:60px;box-sizing:border-box;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+            <span style="color:#8b949e;font-size:12px;">NIFTY Spot: <strong id="skew-spot" style="color:#e6edf3;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">ATM: <strong id="skew-atm" style="color:#26a69a;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">Expiry: <span id="skew-expiry">—</span></span>
+            <span style="color:#8b949e;font-size:12px;">DTE: <span id="skew-dte" style="color:#f0b429;">—</span> days</span>
+            <button class="btn" onclick="loadSkew()" style="margin-left:auto;padding:4px 10px;font-size:11px;">↻ Refresh</button>
+            <span id="skew-last-update" style="color:#555;font-size:11px;"></span>
+        </div>
+        <!-- Chart -->
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px;height:340px;position:relative;">
+            <canvas id="skew-chart"></canvas>
+        </div>
+        <!-- IV Table -->
+        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:260px;">
+                <div style="font-size:11px;font-weight:700;color:#26a69a;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">📈 CALL IV (CE)</div>
+                <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                    <thead>
+                        <tr style="background:#1e2130;">
+                            <th style="padding:6px 8px;text-align:left;color:#8b949e;border-bottom:1px solid #2B2B43;">Strike</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">IV %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="skew-ce-tbody">
+                        <tr><td colspan="3" style="text-align:center;color:#555;padding:20px;">Click Volatility Skew tab to load</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div style="flex:1;min-width:260px;">
+                <div style="font-size:11px;font-weight:700;color:#ef5350;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">📉 PUT IV (PE)</div>
+                <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                    <thead>
+                        <tr style="background:#1e2130;">
+                            <th style="padding:6px 8px;text-align:left;color:#8b949e;border-bottom:1px solid #2B2B43;">Strike</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                            <th style="padding:6px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">IV %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="skew-pe-tbody">
+                        <tr><td colspan="3" style="text-align:center;color:#555;padding:20px;">Click Volatility Skew tab to load</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Option Chain Full Panel -->
+    <div id="chain-panel" style="display:none;position:fixed;top:0;left:48px;right:0;bottom:36px;background:#131722;overflow:auto;z-index:999;padding:8px;padding-top:60px;box-sizing:border-box;">
+        <!-- Header -->
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+            <span style="color:#8b949e;font-size:12px;">NIFTY Spot: <strong id="chain-spot" style="color:#e6edf3;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">ATM: <strong id="chain-atm" style="color:#26a69a;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">Expiry: <span id="chain-expiry" style="color:#f0b429;">—</span></span>
+            <button class="btn" onclick="loadChain()" style="margin-left:auto;padding:4px 10px;font-size:11px;">↻ Refresh</button>
+            <span id="chain-last-update" style="color:#555;font-size:11px;"></span>
+        </div>
+        <!-- Table -->
+        <div style="overflow-x:auto;">
+            <table id="chain-table" style="width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed;">
+                <colgroup>
+                    <!-- CE side: OI, LTP, Open, High, Close, Low -->
+                    <col style="width:7%"><col style="width:7%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:6%">
+                    <!-- Strike -->
+                    <col style="width:8%">
+                    <!-- PE side: LTP, Open, High, Close, Low, OI -->
+                    <col style="width:7%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:7%">
+                </colgroup>
+                <thead>
+                    <tr style="background:#1a1f2e;">
+                        <th colspan="6" style="padding:6px 8px;text-align:center;color:#26a69a;border-bottom:2px solid #26a69a;letter-spacing:0.8px;font-size:10px;text-transform:uppercase;">📈 CALL (CE)</th>
+                        <th style="padding:6px 8px;text-align:center;color:#8b949e;border-bottom:2px solid #30363d;"></th>
+                        <th colspan="6" style="padding:6px 8px;text-align:center;color:#ef5350;border-bottom:2px solid #ef5350;letter-spacing:0.8px;font-size:10px;text-transform:uppercase;">📉 PUT (PE)</th>
+                    </tr>
+                    <tr style="background:#161b22;">
+                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">OI</th>
+                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Open</th>
+                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">High</th>
+                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Close</th>
+                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Low</th>
+                        <th style="padding:5px 8px;text-align:center;color:#f0b429;border-bottom:1px solid #2B2B43;font-weight:700;">Strike</th>
+                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Open</th>
+                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">High</th>
+                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Close</th>
+                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Low</th>
+                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">OI</th>
+                    </tr>
+                </thead>
+                <tbody id="chain-tbody">
+                    <tr><td colspan="13" style="text-align:center;color:#555;padding:20px;">Click Option Chain tab to load</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Rate of Change Panel -->
+    <div id="roc-panel" style="display:none;position:fixed;top:0;left:48px;right:0;bottom:36px;background:#131722;overflow:auto;z-index:999;padding:8px;padding-top:60px;box-sizing:border-box;">
+        <!-- Header -->
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+            <span style="color:#8b949e;font-size:12px;">NIFTY Spot: <strong id="roc-spot" style="color:#e6edf3;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">ATM: <strong id="roc-atm" style="color:#26a69a;">—</strong></span>
+            <span style="color:#8b949e;font-size:12px;">Expiry: <span id="roc-expiry" style="color:#f0b429;">—</span></span>
+            <!-- Mode dropdown -->
+            <div style="display:flex;align-items:center;gap:6px;margin-left:8px;">
+                <label style="color:#8b949e;font-size:11px;">Mode:</label>
+                <select id="roc-mode" onchange="loadRoc()" style="background:#1e2130;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;">
+                    <option value="rolling">📊 Rolling (sliding window)</option>
+                    <option value="fixed">🕐 Fixed (candle reset)</option>
+                </select>
+            </div>
+            <span id="roc-mode-desc" style="color:#555;font-size:10px;"></span>
+            <button class="btn" onclick="loadRoc()" style="margin-left:auto;padding:4px 10px;font-size:11px;">↻ Refresh</button>
+            <span id="roc-last-update" style="color:#555;font-size:11px;"></span>
+        </div>
+        <!-- Two tables side by side -->
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <!-- CALL RoC -->
+            <div style="flex:1;min-width:340px;">
+                <div style="font-size:11px;font-weight:700;color:#26a69a;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">📈 CALL (CE) — Rate of Change %</div>
+                <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                    <thead>
+                        <tr style="background:#161b22;">
+                            <th style="padding:5px 8px;text-align:left;color:#8b949e;border-bottom:1px solid #2B2B43;">Strike</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;border-left:1px solid #2B2B43;">30s %</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;border-left:1px solid #2B2B43;">1m %</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;border-left:1px solid #2B2B43;">3m %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="roc-ce-tbody">
+                        <tr><td colspan="5" style="text-align:center;color:#555;padding:20px;">Click Rate of Change tab to load</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <!-- PUT RoC -->
+            <div style="flex:1;min-width:340px;">
+                <div style="font-size:11px;font-weight:700;color:#ef5350;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">📉 PUT (PE) — Rate of Change %</div>
+                <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                    <thead>
+                        <tr style="background:#161b22;">
+                            <th style="padding:5px 8px;text-align:left;color:#8b949e;border-bottom:1px solid #2B2B43;">Strike</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;border-left:1px solid #2B2B43;">30s %</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;border-left:1px solid #2B2B43;">1m %</th>
+                            <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;border-left:1px solid #2B2B43;">3m %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="roc-pe-tbody">
+                        <tr><td colspan="5" style="text-align:center;color:#555;padding:20px;">Click Rate of Change tab to load</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="tab-nav">
+        <button class="tab-btn active" id="tab-chart" onclick="switchTab('chart')" title="Chart">📈</button>
+        <button class="tab-btn" id="tab-options" onclick="switchTab('options')" title="Options Chain">⚡</button>
+        <button class="tab-btn" id="tab-straddle" onclick="switchTab('straddle')" title="Straddle">🎯</button>
+        <button class="tab-btn" id="tab-oi" onclick="switchTab('oi')" title="OI Tracker">📊</button>
+        <button class="tab-btn" id="tab-skew" onclick="switchTab('skew')" title="Volatility Skew">📉</button>
+        <button class="tab-btn" id="tab-chain" onclick="switchTab('chain')" title="Option Chain">🔗</button>
+        <button class="tab-btn" id="tab-roc" onclick="switchTab('roc')" title="Rate of Change">⚡️</button>
+    </div>
+
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <script>
         let chart, candleSeries;
         let currentSymbol = 'NIFTY_DEC', currentTimeframe = '3';
@@ -199,6 +664,26 @@
         let selectedLineIndex = -1;
         let alertAudio = null;
         let alertTimeout = null;
+        let alertLastCandleTs = null;  // tracks current candle timestamp
+        let alertFiredLevels = new Set(); // tracks price levels that already fired in current candle
+        let alertEnabled = false; // alert is off by default
+
+        function toggleAlert() {
+            alertEnabled = !alertEnabled;
+            const btn = document.getElementById('alertToggle');
+            if (alertEnabled) {
+                btn.textContent = '🔔 On';
+                btn.style.background = 'rgba(38,166,154,0.2)';
+                btn.style.borderColor = '#26a69a';
+                btn.style.color = '#26a69a';
+            } else {
+                btn.textContent = '🔕 Off';
+                btn.style.background = '#2a2a2a';
+                btn.style.borderColor = '#555';
+                btn.style.color = '#8b949e';
+                stopAlert();
+            }
+        }
 
         const drawFootprint = () => {
             if (!footprintCtx || !chart || !footprintEnabled || liveData.length === 0) {
@@ -311,29 +796,38 @@
 
         // Initialize WebSocket connection
         function initWebSocket() {
-            socket = io();
+            socket = io({
+                reconnection: true,
+                reconnectionAttempts: Infinity,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 5000,
+                timeout: 20000
+            });
 
             socket.on('connect', () => {
                 console.log('WebSocket connected');
                 updateStatus('Live Data Connected', '#26a69a');
                 document.getElementById('connection-status').textContent = 'Live';
-                isPlaying = true; // Auto-start live data
+                isPlaying = true;
                 updatePlayButton();
-                
-                // Don't load historical data here - it's already loaded on page init
             });
 
-            socket.on('disconnect', () => {
-                console.log('WebSocket disconnected');
-                updateStatus('WebSocket Disconnected', '#ef5350');
-                document.getElementById('connection-status').textContent = 'Disconnected';
+            socket.on('disconnect', (reason) => {
+                console.log('WebSocket disconnected:', reason);
+                updateStatus('WebSocket Disconnected — Reconnecting...', '#ef5350');
+                document.getElementById('connection-status').textContent = 'Reconnecting...';
                 isPlaying = false;
                 updatePlayButton();
             });
 
-            socket.on('ohlc_data', (data) => {
-                console.log('Received OHLC data:', data);
+            socket.on('reconnect', () => {
+                console.log('WebSocket reconnected');
+                updateStatus('Reconnected', '#26a69a');
+                isPlaying = true;
+                updatePlayButton();
+            });
 
+            socket.on('ohlc_data', (data) => {
                 // Always process historical data, only check isPlaying for live data
                 if (data.historical || isPlaying) {
                     updateWithOHLC(data);
@@ -345,9 +839,21 @@
 
                         // Check alert threshold
                         const alertThreshold = parseInt(document.getElementById('alertThreshold').value) || 0;
-                        if (alertThreshold > 0 && !data.historical) {
+                        if (alertEnabled && alertThreshold > 0 && !data.historical) {
                             if (level.buy_qty >= alertThreshold || level.sell_qty >= alertThreshold) {
-                                playAlert();
+                                const candleTs = data.timestamp || null;
+                                // Reset fired levels when a new candle starts
+                                if (candleTs !== alertLastCandleTs) {
+                                    alertLastCandleTs = candleTs;
+                                    alertFiredLevels.clear();
+                                }
+                                // Fire once per price level per candle
+                                const levelKey = `${level.price}_${level.buy_qty >= alertThreshold ? 'b' : 's'}`;
+                                if (!alertFiredLevels.has(levelKey)) {
+                                    alertFiredLevels.add(levelKey);
+                                    stopAlert();
+                                    playAlert();
+                                }
                             }
                         }
 
@@ -368,8 +874,8 @@
         function initChart() {
             const container = document.getElementById('chart-container');
             chart = LightweightCharts.createChart(container, {
-                width: window.innerWidth,
-                height: window.innerHeight,
+                width: window.innerWidth - 48,
+                height: window.innerHeight - 36,
                 layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc' },
                 grid: { vertLines: { visible: false }, horzLines: { visible: false } },
                 rightPriceScale: { borderColor: '#2B2B43', autoScale: true },
@@ -383,11 +889,12 @@
                 },
                 localization: {
                     timeFormatter: (time) => {
-                        // Subtract IST offset since we added it to timestamps
                         const utcTime = time - 19800;
                         const date = new Date(utcTime * 1000);
-                        return date.toLocaleTimeString('en-IN', {
+                        return date.toLocaleString('en-IN', {
                             timeZone: 'Asia/Kolkata',
+                            day: '2-digit',
+                            month: 'short',
                             hour: '2-digit',
                             minute: '2-digit'
                         });
@@ -432,30 +939,60 @@
             return num.toString();
         }
 
-        // Play alert sound for 3 seconds
+        // Play alert sound — bell tone with natural decay
+        let alertOscillator = null;
+        let alertGainNode = null;
+        let alertAudioContext = null;
+
         function playAlert() {
-            if (alertTimeout) return; // Already playing
-            
-            // Create audio context and oscillator for beep sound
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            const oscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
-            
-            oscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-            
-            oscillator.frequency.value = 800; // 800 Hz beep
-            oscillator.type = 'sine';
-            gainNode.gain.value = 0.3;
-            
-            oscillator.start();
-            
-            // Stop after 3 seconds
+            // Stop any currently playing sound first
+            stopAlert();
+
+            alertAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+            // Bell uses two oscillators (fundamental + harmonic) for a richer tone
+            const osc1 = alertAudioContext.createOscillator();
+            const osc2 = alertAudioContext.createOscillator();
+            const gain = alertAudioContext.createGain();
+
+            osc1.connect(gain);
+            osc2.connect(gain);
+            gain.connect(alertAudioContext.destination);
+
+            // Bell frequencies: fundamental ~880 Hz + harmonic ~2200 Hz
+            osc1.type = 'sine';
+            osc1.frequency.value = 880;
+            osc2.type = 'sine';
+            osc2.frequency.value = 2200;
+
+            // Bell envelope: sharp attack, exponential decay (natural bell shape)
+            const now = alertAudioContext.currentTime;
+            gain.gain.setValueAtTime(0, now);
+            gain.gain.linearRampToValueAtTime(0.5, now + 0.01);   // sharp attack
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5); // decay over 1.5s
+
+            osc1.start(now);
+            osc2.start(now);
+            osc1.stop(now + 1.5);
+            osc2.stop(now + 1.5);
+
+            alertOscillator = osc1;
+            alertGainNode = gain;
+
             alertTimeout = setTimeout(() => {
-                oscillator.stop();
-                audioContext.close();
-                alertTimeout = null;
-            }, 3000);
+                stopAlert();
+            }, 1600);
+        }
+
+        function stopAlert() {
+            if (alertTimeout) { clearTimeout(alertTimeout); alertTimeout = null; }
+            try {
+                if (alertOscillator) { alertOscillator.stop(); alertOscillator = null; }
+            } catch(e) {}
+            try {
+                if (alertAudioContext) { alertAudioContext.close(); alertAudioContext = null; }
+            } catch(e) {}
+            alertGainNode = null;
         }
 
 
@@ -515,8 +1052,6 @@
                 currentTime = Math.floor(Date.now() / 1000) + 19800;
             }
 
-            console.log('Processing candle with timestamp:', currentTime, 'Date:', new Date((currentTime - 19800) * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }));
-
             // Always create new candles for different timestamps
             const existingCandleIndex = liveData.findIndex(candle => candle.time === currentTime);
 
@@ -549,7 +1084,19 @@
 
                 liveData[existingCandleIndex] = updatedCandle;
                 lastPrice = updatedCandle.close;
-                console.log('Updated existing candle at IST', new Date(currentTime * 1000));
+
+                // Use update() for live candle — much faster than setData for single candle updates
+                if (!ohlcData.historical) {
+                    candleSeries.update({
+                        time:  updatedCandle.time,
+                        open:  updatedCandle.open,
+                        high:  updatedCandle.high,
+                        low:   updatedCandle.low,
+                        close: updatedCandle.close
+                    });
+                    if (footprintEnabled) drawFootprint();
+                    return;
+                }
             } else {
                 // Create new candle
                 const newCandle = {
@@ -573,7 +1120,19 @@
 
                 liveData.push(newCandle);
                 lastPrice = newCandle.close;
-                console.log('Created new candle at IST', new Date(currentTime * 1000), 'Total candles:', liveData.length);
+
+                // New candle — use update() to append it live
+                if (!ohlcData.historical) {
+                    candleSeries.update({
+                        time:  newCandle.time,
+                        open:  newCandle.open,
+                        high:  newCandle.high,
+                        low:   newCandle.low,
+                        close: newCandle.close
+                    });
+                    if (footprintEnabled) drawFootprint();
+                    return;
+                }
             }
 
             // Sort by timestamp to maintain chronological order
@@ -710,7 +1269,7 @@
         window.addEventListener('resize', () => {
             if (chart) {
                 chart.applyOptions({
-                    width: window.innerWidth,
+                    width: window.innerWidth - 48,
                     height: window.innerHeight
                 });
                 setupFootprintCanvas();
@@ -841,6 +1400,9 @@
             initWebSocket();
             setupOverlayCanvases();
 
+            // Start options chain + straddle polling in background
+            startBackgroundPolling();
+
             // Setup footprint toggle
             document.getElementById('footprint').addEventListener('click', toggleFootprint);
 
@@ -965,6 +1527,782 @@
                 updateStatus('Line deleted', '#ef5350');
             }
         });
+
+        // ── Options Chain ──────────────────────────────────────────────
+        let optionsRefreshTimer = null;
+        let straddleRefreshTimer = null;
+        let oiRefreshTimer = null;
+        let skewRefreshTimer = null;
+        let skewChart = null;
+        let chainRefreshTimer = null;
+        let rocRefreshTimer = null;
+        let triggerLog = [];           // [{time, strike, type, ltp}, ...]
+        let triggerLogSeen = new Set(); // dedup key: strike_type within same minute
+        let activeTab = 'chart';
+
+        function startBackgroundPolling() {
+            if (!optionsRefreshTimer) {
+                loadOptionsChain();
+                optionsRefreshTimer = setInterval(loadOptionsChain, 2000);
+            }
+            if (!straddleRefreshTimer) {
+                loadStraddle();
+                straddleRefreshTimer = setInterval(loadStraddle, 2000);
+            }
+            if (!oiRefreshTimer) {
+                loadOITracker();
+                oiRefreshTimer = setInterval(loadOITracker, 5000);
+            }
+        }
+
+        function switchTab(tab) {
+            activeTab = tab;
+            document.getElementById('tab-chart').classList.toggle('active', tab === 'chart');
+            document.getElementById('tab-options').classList.toggle('active', tab === 'options');
+            document.getElementById('tab-straddle').classList.toggle('active', tab === 'straddle');
+            document.getElementById('tab-oi').classList.toggle('active', tab === 'oi');
+            document.getElementById('tab-skew').classList.toggle('active', tab === 'skew');
+            document.getElementById('tab-chain').classList.toggle('active', tab === 'chain');
+            document.getElementById('tab-roc').classList.toggle('active', tab === 'roc');
+            document.getElementById('options-panel').classList.toggle('visible', tab === 'options');
+            document.getElementById('straddle-panel').style.display = (tab === 'straddle') ? 'flex' : 'none';
+            document.getElementById('oi-panel').style.display = (tab === 'oi') ? 'block' : 'none';
+            document.getElementById('skew-panel').style.display = (tab === 'skew') ? 'block' : 'none';
+            document.getElementById('chain-panel').style.display = (tab === 'chain') ? 'block' : 'none';
+            document.getElementById('roc-panel').style.display = (tab === 'roc') ? 'block' : 'none';
+
+            if (tab === 'skew' && !skewRefreshTimer) {
+                loadSkew();
+                skewRefreshTimer = setInterval(loadSkew, 5000);
+            }
+            if (tab !== 'skew' && skewRefreshTimer) {
+                clearInterval(skewRefreshTimer);
+                skewRefreshTimer = null;
+            }
+            if (tab === 'chain' && !chainRefreshTimer) {
+                loadChain();
+                chainRefreshTimer = setInterval(loadChain, 3000);
+            }
+            if (tab !== 'chain' && chainRefreshTimer) {
+                clearInterval(chainRefreshTimer);
+                chainRefreshTimer = null;
+            }
+            if (tab === 'roc' && !rocRefreshTimer) {
+                loadRoc();
+                rocRefreshTimer = setInterval(loadRoc, 3000);
+            }
+            if (tab !== 'roc' && rocRefreshTimer) {
+                clearInterval(rocRefreshTimer);
+                rocRefreshTimer = null;
+            }
+        }
+
+        async function loadOptionsChain() {
+            try {
+                const resp = await fetch('/api/options-chain');
+                const result = await resp.json();
+
+                if (!result.success) {
+                    document.getElementById('options-tbody').innerHTML =
+                        `<tr><td colspan="13" style="text-align:center;color:#ef5350;padding:20px;">${result.message || 'Failed to load'}</td></tr>`;
+                    return;
+                }
+
+                document.getElementById('opt-expiry').textContent = result.expiry || '—';
+                document.getElementById('opt-nifty-ltp').textContent = result.nifty_ltp ? result.nifty_ltp.toFixed(2) : '—';
+                document.getElementById('opt-atm').textContent = result.atm_strike || '—';
+                document.getElementById('opt-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+                // Trigger 2 — SMA header
+                const t2 = result.trigger2 || {};
+                const sma5El = document.getElementById('opt-sma5');
+                const sma8El = document.getElementById('opt-sma8');
+                const t2sigEl = document.getElementById('opt-t2-signal');
+                sma5El.textContent = t2.sma5 != null ? t2.sma5.toFixed(2) : '—';
+                sma8El.textContent = t2.sma8 != null ? t2.sma8.toFixed(2) : '—';
+                if (t2.signal === true) {
+                    sma5El.style.color = '#26a69a'; sma8El.style.color = '#26a69a';
+                    t2sigEl.textContent = '📈 CE: SMA5 > SMA8 | 📉 PE: needs SMA5 < SMA8';
+                    t2sigEl.style.color = '#26a69a';
+                } else if (t2.signal === false) {
+                    sma5El.style.color = '#ef5350'; sma8El.style.color = '#ef5350';
+                    t2sigEl.textContent = '📉 PE: SMA5 < SMA8 | 📈 CE: needs SMA5 > SMA8';
+                    t2sigEl.style.color = '#ef5350';
+                } else {
+                    sma5El.style.color = '#8b949e'; sma8El.style.color = '#8b949e';
+                    t2sigEl.textContent = '⏳ Insufficient data';
+                    t2sigEl.style.color = '#555';
+                }
+
+                const rows = (result.data || []).filter(r =>
+                    (r.type === 'CE' && r.strike <= result.atm_strike) ||
+                    (r.type === 'PE' && r.strike >= result.atm_strike)
+                );
+                const ceRows = rows.filter(r => r.type === 'CE');
+                const peRows = rows.filter(r => r.type === 'PE');
+
+                // ATM diff per type — used for Trigger1 comparison
+                const atmCE = ceRows.find(r => r.label === 'ATM');
+                const atmPE = peRows.find(r => r.label === 'ATM');
+                const atmDiff = {
+                    CE: atmCE ? atmCE.atp_minus_ltp : null,
+                    PE: atmPE ? atmPE.atp_minus_ltp : null,
+                };
+
+                let html = '';
+
+                html += `<tr class="section-divider"><td colspan="13">── CALL OPTIONS (CE) ──</td></tr>`;
+                ceRows.forEach(row => {
+                    html += buildRow(row, result.atm_strike, atmDiff, t2.signal);
+                });
+
+                html += `<tr class="section-divider"><td colspan="13">── PUT OPTIONS (PE) ──</td></tr>`;
+                peRows.forEach(row => {
+                    html += buildRow(row, result.atm_strike, atmDiff, t2.signal);
+                });
+
+                document.getElementById('options-tbody').innerHTML = html;
+
+                // ── All-Triggers Log ──────────────────────────────────
+                checkAllTriggers(ceRows.concat(peRows), result.atm_strike, atmDiff, t2.signal);
+
+            } catch (e) {
+                document.getElementById('options-tbody').innerHTML =
+                    `<tr><td colspan="13" style="text-align:center;color:#ef5350;padding:20px;">Error: ${e.message}</td></tr>`;
+            }
+        }
+
+        function buildRow(row, atmStrike, atmDiff, t2signal) {
+            const isAtm = row.strike === atmStrike;
+            const typeClass = row.type === 'CE' ? 'badge-ce' : 'badge-pe';
+            const fmt = v => (v != null && v !== 0) ? v.toFixed(2) : '—';
+            const fmtVol = v => {
+                if (!v) return '—';
+                if (v >= 10000000) return (v / 10000000).toFixed(2) + ' Cr';
+                if (v >= 100000)   return (v / 100000).toFixed(2) + ' L';
+                if (v >= 1000)     return (v / 1000).toFixed(1) + 'K';
+                return v.toString();
+            };
+
+            let diffHtml = '—';
+            if (row.atp_minus_ltp != null) {
+                const cls = row.atp_minus_ltp > 0 ? 'diff-pos' : row.atp_minus_ltp < 0 ? 'diff-neg' : 'diff-zero';
+                const sign = row.atp_minus_ltp > 0 ? '+' : '';
+                diffHtml = `<span class="${cls}">${sign}${row.atp_minus_ltp.toFixed(2)}</span>`;
+            }
+
+            // Trigger1: ITM only, ltp < atp AND |atp-ltp| of this row < |atp-ltp| of ATM row (same type)
+            const isItm = (row.type === 'CE' && row.strike < atmStrike) || (row.type === 'PE' && row.strike > atmStrike);
+            const atm_diff_val = atmDiff ? atmDiff[row.type] : null;
+            const priceBelowAtp = row.ltp > 0 && row.atp > 0 && row.ltp < row.atp;
+            const itmDiffLessThanAtm = row.atp_minus_ltp != null && atm_diff_val != null
+                                       && Math.abs(row.atp_minus_ltp) < Math.abs(atm_diff_val);
+            const trigger1 = isItm && priceBelowAtp && itmDiffLessThanAtm;
+            const trigger1Html = trigger1
+                ? `<span class="trigger-badge">Trigger 1</span>`
+                : '';
+
+            // Trigger 2: SMA5 > SMA8 for CE (bullish), SMA5 < SMA8 for PE (bearish)
+            let trigger2Html = '—';
+            const t2fires = (row.type === 'CE' && t2signal === true) ||
+                            (row.type === 'PE' && t2signal === false);
+            const t2label = row.type === 'CE' ? 'SMA5 > SMA8' : 'SMA5 < SMA8';
+            if (t2signal === null || t2signal === undefined) {
+                trigger2Html = `<span style="color:#333;font-size:10px;">⏳</span>`;
+            } else if (t2fires) {
+                trigger2Html = isItm
+                    ? `<span class="trigger-badge" style="background:rgba(38,166,154,0.2);color:#26a69a;border:1px solid #26a69a;">✅ ${t2label}</span>`
+                    : `<span style="color:#555;font-size:10px;">✅ ${t2label}</span>`;
+            } else {
+                const oppLabel = row.type === 'CE' ? 'SMA5 < SMA8' : 'SMA5 > SMA8';
+                trigger2Html = `<span style="color:#555;font-size:10px;">${oppLabel}</span>`;
+            }
+
+            // Trigger 3: OI Decreasing
+            let trigger3Html = '—';
+            if (row.oi_decreasing === true) {
+                trigger3Html = `<span class="trigger-badge" style="background:rgba(239,83,80,0.2);color:#ef5350;border:1px solid #ef5350;">📉 OI ↓</span>`;
+            } else if (row.oi_decreasing === false) {
+                trigger3Html = `<span style="color:#555;font-size:10px;">OI ↑</span>`;
+            } else {
+                trigger3Html = `<span style="color:#333;font-size:10px;">⏳</span>`;
+            }
+
+            return `<tr class="${isAtm ? 'atm-row' : ''}">
+                <td><span class="${typeClass}">${row.type}</span></td>
+                <td>${row.strike}</td>
+                <td>${row.label}</td>
+                <td>${fmt(row.atp)}</td>
+                <td>${fmt(row.ltp)}</td>
+                <td>${diffHtml}</td>
+                <td>${fmt(row.open)}</td>
+                <td>${fmt(row.high)}</td>
+                <td>${fmt(row.low)}</td>
+                <td>${fmtVol(row.volume)}</td>
+                <td>${trigger1Html}</td>
+                <td>${trigger2Html}</td>
+                <td>${trigger3Html}</td>
+            </tr>`;
+        }
+
+        function checkAllTriggers(rows, atmStrike, atmDiff, t2signal) {
+            if (t2signal === null || t2signal === undefined) return; // need SMA data
+            const nowMin = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
+
+            rows.forEach(row => {
+                // T2 check — per type: CE needs bullish (SMA5>SMA8), PE needs bearish (SMA5<SMA8)
+                const t2 = (row.type === 'CE' && t2signal === true) ||
+                           (row.type === 'PE' && t2signal === false);
+                if (!t2) return;
+                // T1 check
+                const isItm = (row.type === 'CE' && row.strike < atmStrike) || (row.type === 'PE' && row.strike > atmStrike);
+                const atm_diff_val = atmDiff ? atmDiff[row.type] : null;
+                const priceBelowAtp = row.ltp > 0 && row.atp > 0 && row.ltp < row.atp;
+                const itmDiffLessThanAtm = row.atp_minus_ltp != null && atm_diff_val != null
+                    && Math.abs(row.atp_minus_ltp) < Math.abs(atm_diff_val);
+                const t1 = isItm && priceBelowAtp && itmDiffLessThanAtm;
+
+                // T3 check
+                const t3 = row.oi_decreasing === true;
+
+                if (!t1 || !t3) return; // all three must fire
+
+                // Dedup: only log once per strike+type per minute
+                const key = `${row.strike}_${row.type}_${nowMin}`;
+                if (triggerLogSeen.has(key)) return;
+                triggerLogSeen.add(key);
+
+                const timeStr = new Date().toLocaleTimeString('en-IN', {
+                    timeZone: 'Asia/Kolkata',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit'
+                });
+                triggerLog.unshift({ time: timeStr, strike: row.strike, type: row.type, ltp: row.ltp });
+                if (triggerLog.length > 50) triggerLog.pop(); // keep last 50
+            });
+
+            renderTriggerLog();
+        }
+
+        function renderTriggerLog() {
+            const tbody = document.getElementById('trigger-log-tbody');
+            if (!tbody) return;
+            if (triggerLog.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#555;padding:12px;font-size:11px;">No signals yet — waiting for T1 + T2 + T3 to fire together</td></tr>';
+                return;
+            }
+            tbody.innerHTML = triggerLog.map(e => {
+                const typeColor = e.type === 'CE' ? '#26a69a' : '#ef5350';
+                return `<tr style="border-bottom:1px solid #1a1f2e;">
+                    <td style="padding:5px 10px;color:#8b949e;">${e.time}</td>
+                    <td style="padding:5px 10px;text-align:right;color:#f0b429;font-weight:700;">${e.strike}</td>
+                    <td style="padding:5px 10px;text-align:center;"><span style="background:${typeColor}22;color:${typeColor};border:1px solid ${typeColor};border-radius:3px;padding:1px 6px;font-size:10px;font-weight:700;">${e.type}</span></td>
+                    <td style="padding:5px 10px;text-align:right;color:#c9d1d9;">₹${e.ltp > 0 ? e.ltp.toFixed(2) : '—'}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        // ── Straddle Tab ───────────────────────────────────────────────
+        let straddleChart = null;
+        let straddleChartData = { labels: [], data: [] };
+        let straddleDayLow = null, straddleDayHigh = null;
+        let straddleAlertTriggered = {};
+        let straddleZoomed = false;
+
+
+        async function loadOITracker() {
+            try {
+                const resp = await fetch('/api/oi-tracker');
+                const result = await resp.json();
+                if (!result.success) {
+                    const msg = `<tr><td colspan="8" style="text-align:center;color:#ef5350;padding:20px;">${result.message || 'Failed to load'}</td></tr>`;
+                    document.getElementById('oi-ce-tbody').innerHTML = msg;
+                    document.getElementById('oi-pe-tbody').innerHTML = msg;
+                    return;
+                }
+                document.getElementById('oi-spot').textContent = result.nifty_spot ? result.nifty_spot.toFixed(2) : '—';
+                document.getElementById('oi-atm').textContent = result.atm_strike || '—';
+                document.getElementById('oi-expiry').textContent = result.expiry || '—';
+                document.getElementById('oi-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+                function buildOIRow(row, atm) {
+                    const isAtm = row.strike === atm;
+                    const bg = isAtm ? 'background:rgba(38,166,154,0.08);' : '';
+                    const fw = isAtm ? 'font-weight:600;' : '';
+                    function chgCell(pct) {
+                        if (pct === null || pct === undefined) return `<td style="padding:5px 8px;text-align:right;color:#555;">—</td>`;
+                        const color = pct > 0 ? '#26a69a' : pct < 0 ? '#ef5350' : '#8b949e';
+                        const sign = pct > 0 ? '+' : '';
+                        const spikeClass = Math.abs(pct) >= 30 ? (pct > 0 ? ' class="oi-spike-up"' : ' class="oi-spike-down"') : '';
+                        return `<td${spikeClass} style="padding:5px 8px;text-align:right;color:${color};${fw}">${sign}${pct.toFixed(2)}%</td>`;
+                    }
+                    return `<tr style="${bg}">
+                        <td style="padding:5px 8px;${fw}color:${isAtm?'#26a69a':'#c9d1d9'};">${row.strike}${isAtm?' ◀':''}</td>
+                        <td style="padding:5px 8px;text-align:right;${fw}">₹${row.ltp.toFixed(2)}</td>
+                        <td style="padding:5px 8px;text-align:right;${fw}">${row.oi.toLocaleString()}</td>
+                        <td style="padding:5px 8px;text-align:right;color:#8b949e;">${row.volume.toLocaleString()}</td>
+                        ${chgCell(row.oi_chg['5m'])}
+                        ${chgCell(row.oi_chg['10m'])}
+                        ${chgCell(row.oi_chg['15m'])}
+                        ${chgCell(row.oi_chg['30m'])}
+                    </tr>`;
+                }
+
+                document.getElementById('oi-ce-tbody').innerHTML = result.calls.map(r => buildOIRow(r, result.atm_strike)).join('') || '<tr><td colspan="8" style="text-align:center;color:#555;padding:20px;">No data</td></tr>';
+                document.getElementById('oi-pe-tbody').innerHTML = result.puts.map(r => buildOIRow(r, result.atm_strike)).join('') || '<tr><td colspan="8" style="text-align:center;color:#555;padding:20px;">No data</td></tr>';
+            } catch(e) {
+                console.error('OI Tracker load error:', e);
+            }
+        }
+
+        // ── Rate of Change Tab ──────────────────────────────────────────
+        async function loadRoc() {
+            const mode = document.getElementById('roc-mode')?.value || 'rolling';
+
+            // Update description text
+            const desc = document.getElementById('roc-mode-desc');
+            if (desc) desc.textContent = mode === 'rolling'
+                ? 'Rolling: % change vs exactly T seconds ago, updates every tick'
+                : 'Fixed: % change since start of current 30s / 1m / 3m period, resets at each boundary';
+
+            try {
+                const resp = await fetch(`/api/roc?mode=${mode}`);
+                const result = await resp.json();
+                if (!result.success) {
+                    const msg = `<tr><td colspan="5" style="text-align:center;color:#ef5350;padding:20px;">${result.message || 'Failed to load'}</td></tr>`;
+                    document.getElementById('roc-ce-tbody').innerHTML = msg;
+                    document.getElementById('roc-pe-tbody').innerHTML = msg;
+                    return;
+                }
+
+                document.getElementById('roc-spot').textContent = result.nifty_spot ? result.nifty_spot.toFixed(2) : '—';
+                document.getElementById('roc-atm').textContent = result.atm_strike || '—';
+                document.getElementById('roc-expiry').textContent = result.expiry || '—';
+                document.getElementById('roc-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+                const windows = ['30s', '1m', '3m'];
+
+                function rocCell(pct) {
+                    if (pct === null || pct === undefined) {
+                        return `<td style="padding:5px 8px;text-align:right;color:#333;border-left:1px solid #1e2130;">—</td>`;
+                    }
+                    const color = pct > 0 ? '#26a69a' : pct < 0 ? '#ef5350' : '#8b949e';
+                    const fw = Math.abs(pct) >= 5 ? 'font-weight:700;' : '';
+                    // Background pulse for big moves (>= 10%)
+                    const bg = Math.abs(pct) >= 10
+                        ? (pct > 0 ? 'background:rgba(38,166,154,0.15);' : 'background:rgba(239,83,80,0.15);')
+                        : '';
+                    const sign = pct > 0 ? '+' : '';
+                    return `<td style="padding:5px 8px;text-align:right;color:${color};${fw}${bg}border-left:1px solid #1e2130;">${sign}${pct.toFixed(2)}%</td>`;
+                }
+
+                function buildRocRow(row, atm) {
+                    const isAtm = row.strike === atm;
+                    const bg = isAtm ? 'background:rgba(240,180,41,0.08);' : '';
+                    const fw = isAtm ? 'font-weight:700;' : '';
+                    const strikeColor = isAtm ? '#f0b429' : '#c9d1d9';
+
+                    return `<tr style="${bg}border-bottom:1px solid #1a1f2e;">
+                        <td style="padding:5px 8px;${fw}color:${strikeColor};">${row.strike}${isAtm ? ' ◀' : ''}</td>
+                        <td style="padding:5px 8px;text-align:right;${fw}color:#c9d1d9;">₹${row.ltp > 0 ? row.ltp.toFixed(2) : '—'}</td>
+                        ${windows.map(w => rocCell(row.roc ? row.roc[w] : null)).join('')}
+                    </tr>`;
+                }
+
+                document.getElementById('roc-ce-tbody').innerHTML =
+                    result.calls.map(r => buildRocRow(r, result.atm_strike)).join('') ||
+                    '<tr><td colspan="5" style="text-align:center;color:#555;padding:20px;">No data</td></tr>';
+                document.getElementById('roc-pe-tbody').innerHTML =
+                    result.puts.map(r => buildRocRow(r, result.atm_strike)).join('') ||
+                    '<tr><td colspan="5" style="text-align:center;color:#555;padding:20px;">No data</td></tr>';
+
+            } catch(e) {
+                console.error('RoC load error:', e);
+            }
+        }
+
+        // ── Option Chain Full Tab ───────────────────────────────────────
+        async function loadChain() {
+            try {
+                const resp = await fetch('/api/option-chain-full');
+                const result = await resp.json();
+                if (!result.success) {
+                    document.getElementById('chain-tbody').innerHTML =
+                        `<tr><td colspan="11" style="text-align:center;color:#ef5350;padding:20px;">${result.message || 'Failed to load'}</td></tr>`;
+                    return;
+                }
+
+                document.getElementById('chain-spot').textContent = result.nifty_spot ? result.nifty_spot.toFixed(2) : '—';
+                document.getElementById('chain-atm').textContent = result.atm_strike || '—';
+                document.getElementById('chain-expiry').textContent = result.expiry || '—';
+                document.getElementById('chain-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+                const fmt = v => (v && v > 0) ? v.toFixed(2) : '—';
+
+                const atm = result.atm_strike;
+                const maxCeOI = Math.max(...result.rows.map(r => (r.ce && r.ce.oi) ? r.ce.oi : 0));
+                const maxPeOI = Math.max(...result.rows.map(r => (r.pe && r.pe.oi) ? r.pe.oi : 0));
+
+                const html = result.rows.map(row => {
+                    const isAtm = row.is_atm;
+                    const ce = row.ce || {};
+                    const pe = row.pe || {};
+
+                    // ITM/OTM classification
+                    // CE ITM: strike < ATM  |  CE OTM: strike > ATM
+                    // PE ITM: strike > ATM  |  PE OTM: strike < ATM
+                    const ceItm = row.strike < atm;
+                    const peItm = row.strike > atm;
+
+                    // Row background: ATM wins, else ITM teal tint, else OTM subtle grey
+                    const rowBg = isAtm
+                        ? 'rgba(240,180,41,0.08)'
+                        : (ceItm ? 'rgba(38,166,154,0.05)' : 'rgba(255,255,255,0.02)');
+
+                    // CE side cell bg: ITM = light teal, OTM = very subtle grey
+                    const ceItmBg = isAtm ? '' : (ceItm
+                        ? 'background:rgba(38,166,154,0.10);'
+                        : 'background:rgba(255,255,255,0.02);');
+                    // PE side cell bg: ITM = light red/pink, OTM = very subtle grey
+                    const peItmBg = isAtm ? '' : (peItm
+                        ? 'background:rgba(239,83,80,0.10);'
+                        : 'background:rgba(255,255,255,0.02);');
+
+                    const atmFw = isAtm ? 'font-weight:700;' : '';
+
+                    // LTP color: green if ltp > open, red if below
+                    const ceLtpColor = ce.ltp > 0 && ce.open > 0
+                        ? (ce.ltp >= ce.open ? '#26a69a' : '#ef5350') : '#c9d1d9';
+                    const peLtpColor = pe.ltp > 0 && pe.open > 0
+                        ? (pe.ltp >= pe.open ? '#26a69a' : '#ef5350') : '#c9d1d9';
+
+                    const ceCell = `${ceItmBg}padding:5px 8px;text-align:right;`;
+                    const peCell = `${peItmBg}padding:5px 8px;text-align:right;`;
+
+                    const fmtOI = v => {
+                        if (!v || v === 0) return '—';
+                        if (v >= 10000000) return (v / 10000000).toFixed(1) + 'Cr';
+                        if (v >= 100000)   return (v / 100000).toFixed(1) + 'L';
+                        if (v >= 1000)     return (v / 1000).toFixed(1) + 'K';
+                        return v.toString();
+                    };
+
+                    return `<tr style="background:${rowBg};border-bottom:1px solid #1e2130;">
+                        <td style="${ceCell}color:#a0aec0;font-size:10px;${ce.oi && ce.oi === maxCeOI ? 'background:rgba(255,193,7,0.20);color:#ffc107;font-weight:700;border-radius:3px;' : ''}">${fmtOI(ce.oi)}</td>
+                        <td style="${ceCell}color:${ceLtpColor};${atmFw}">${fmt(ce.ltp)}</td>
+                        <td style="${ceCell}color:#8b949e;">${fmt(ce.open)}</td>
+                        <td style="${ceCell}color:#26a69a;">${fmt(ce.high)}</td>
+                        <td style="${ceCell}color:#8b949e;">${fmt(ce.close)}</td>
+                        <td style="${ceCell}color:#ef5350;">${fmt(ce.low)}</td>
+                        <td style="padding:5px 8px;text-align:center;background:${isAtm ? 'rgba(240,180,41,0.15)' : '#1a1f2e'};color:${isAtm ? '#f0b429' : '#c9d1d9'};${atmFw}border-left:1px solid #2B2B43;border-right:1px solid #2B2B43;">
+                            ${row.strike}${isAtm ? ' ◀' : ''}
+                        </td>
+                        <td style="${peCell}color:${peLtpColor};${atmFw}">${fmt(pe.ltp)}</td>
+                        <td style="${peCell}color:#8b949e;">${fmt(pe.open)}</td>
+                        <td style="${peCell}color:#26a69a;">${fmt(pe.high)}</td>
+                        <td style="${peCell}color:#8b949e;">${fmt(pe.close)}</td>
+                        <td style="${peCell}color:#ef5350;">${fmt(pe.low)}</td>
+                        <td style="${peCell}color:#a0aec0;font-size:10px;${pe.oi && pe.oi === maxPeOI ? 'background:rgba(255,193,7,0.20);color:#ffc107;font-weight:700;border-radius:3px;' : ''}">${fmtOI(pe.oi)}</td>
+                    </tr>`;
+                }).join('');
+
+                document.getElementById('chain-tbody').innerHTML = html ||
+                    '<tr><td colspan="13" style="text-align:center;color:#555;padding:20px;">No data</td></tr>';
+
+                // Scroll ATM row into view on first load
+                if (!chainRefreshTimer) {
+                    const atm = document.querySelector('#chain-tbody tr td[style*="f0b429"]');
+                    if (atm) atm.closest('tr').scrollIntoView({ block: 'center', behavior: 'smooth' });
+                }
+            } catch(e) {
+                console.error('Option chain load error:', e);
+            }
+        }
+
+        // ── Volatility Skew Tab ─────────────────────────────────────────
+        async function loadSkew() {
+            try {
+                const resp = await fetch('/api/volatility-skew');
+                const result = await resp.json();
+                if (!result.success) {
+                    const msg = `<tr><td colspan="3" style="text-align:center;color:#ef5350;padding:20px;">${result.message || 'Failed to load'}</td></tr>`;
+                    document.getElementById('skew-ce-tbody').innerHTML = msg;
+                    document.getElementById('skew-pe-tbody').innerHTML = msg;
+                    return;
+                }
+
+                document.getElementById('skew-spot').textContent = result.nifty_spot ? result.nifty_spot.toFixed(2) : '—';
+                document.getElementById('skew-atm').textContent = result.atm_strike || '—';
+                document.getElementById('skew-expiry').textContent = result.expiry || '—';
+                document.getElementById('skew-dte').textContent = result.dte ?? '—';
+                document.getElementById('skew-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+                // Build IV table rows
+                function ivRow(row, atm) {
+                    const isAtm = row.strike === atm;
+                    const bg = isAtm ? 'background:rgba(38,166,154,0.08);' : '';
+                    const fw = isAtm ? 'font-weight:600;' : '';
+                    const ivColor = row.iv != null
+                        ? (row.iv > 20 ? '#f0b429' : '#c9d1d9')
+                        : '#555';
+                    return `<tr style="${bg}">
+                        <td style="padding:5px 8px;${fw}color:${isAtm ? '#26a69a' : '#c9d1d9'};">${row.strike}${isAtm ? ' ◀' : ''}</td>
+                        <td style="padding:5px 8px;text-align:right;${fw}">₹${row.ltp > 0 ? row.ltp.toFixed(2) : '—'}</td>
+                        <td style="padding:5px 8px;text-align:right;color:${ivColor};${fw}">${row.iv != null ? row.iv.toFixed(2) + '%' : '—'}</td>
+                    </tr>`;
+                }
+
+                document.getElementById('skew-ce-tbody').innerHTML = result.calls.map(r => ivRow(r, result.atm_strike)).join('') || '<tr><td colspan="3" style="text-align:center;color:#555;padding:20px;">No data</td></tr>';
+                document.getElementById('skew-pe-tbody').innerHTML = result.puts.map(r => ivRow(r, result.atm_strike)).join('') || '<tr><td colspan="3" style="text-align:center;color:#555;padding:20px;">No data</td></tr>';
+
+                // Build chart datasets
+                const allStrikes = [...new Set([...result.calls.map(r => r.strike), ...result.puts.map(r => r.strike)])].sort((a, b) => a - b);
+                const ceMap = Object.fromEntries(result.calls.map(r => [r.strike, r.iv]));
+                const peMap = Object.fromEntries(result.puts.map(r => [r.strike, r.iv]));
+
+                const ceIVs = allStrikes.map(s => ceMap[s] != null ? { x: s, y: ceMap[s] } : null).filter(Boolean);
+                const peIVs = allStrikes.map(s => peMap[s] != null ? { x: s, y: peMap[s] } : null).filter(Boolean);
+
+                const ctx = document.getElementById('skew-chart').getContext('2d');
+                if (skewChart) {
+                    skewChart.data.datasets[0].data = ceIVs;
+                    skewChart.data.datasets[1].data = peIVs;
+                    skewChart.update('none');
+                } else {
+                    skewChart = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            datasets: [
+                                {
+                                    label: 'CE IV',
+                                    data: ceIVs,
+                                    borderColor: '#26a69a',
+                                    backgroundColor: 'rgba(38,166,154,0.08)',
+                                    pointBackgroundColor: '#26a69a',
+                                    pointRadius: 4,
+                                    pointHoverRadius: 6,
+                                    tension: 0.3,
+                                    fill: false,
+                                },
+                                {
+                                    label: 'PE IV',
+                                    data: peIVs,
+                                    borderColor: '#ef5350',
+                                    backgroundColor: 'rgba(239,83,80,0.08)',
+                                    pointBackgroundColor: '#ef5350',
+                                    pointRadius: 4,
+                                    pointHoverRadius: 6,
+                                    tension: 0.3,
+                                    fill: false,
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            interaction: { mode: 'index', intersect: false },
+                            plugins: {
+                                legend: { labels: { color: '#8b949e', font: { size: 11 } } },
+                                tooltip: {
+                                    backgroundColor: '#1e2130',
+                                    titleColor: '#c9d1d9',
+                                    bodyColor: '#8b949e',
+                                    callbacks: {
+                                        title: items => 'Strike: ' + items[0].raw.x,
+                                        label: item => ` ${item.dataset.label}: ${item.raw.y.toFixed(2)}%`
+                                    }
+                                },
+                                annotation: {
+                                    annotations: {
+                                        atmLine: {
+                                            type: 'line',
+                                            xMin: result.atm_strike,
+                                            xMax: result.atm_strike,
+                                            borderColor: 'rgba(240,180,41,0.6)',
+                                            borderWidth: 1,
+                                            borderDash: [4, 4],
+                                            label: {
+                                                display: true,
+                                                content: 'ATM',
+                                                color: '#f0b429',
+                                                font: { size: 10 },
+                                                position: 'start'
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    type: 'linear',
+                                    title: { display: true, text: 'Strike', color: '#8b949e', font: { size: 11 } },
+                                    ticks: { color: '#8b949e', font: { size: 10 } },
+                                    grid: { color: 'rgba(255,255,255,0.05)' }
+                                },
+                                y: {
+                                    title: { display: true, text: 'Implied Volatility (%)', color: '#8b949e', font: { size: 11 } },
+                                    ticks: { color: '#8b949e', font: { size: 10 }, callback: v => v + '%' },
+                                    grid: { color: 'rgba(255,255,255,0.05)' }
+                                }
+                            }
+                        }
+                    });
+                }
+            } catch(e) {
+                console.error('Skew load error:', e);
+            }
+        }
+
+        async function loadStraddle() {
+            try {
+                const resp = await fetch('/api/straddle');
+                const result = await resp.json();
+                if (!result.success) {
+                    document.getElementById('st-tbody').innerHTML =
+                        `<tr><td colspan="4" style="text-align:center;color:#ef5350;padding:20px;font-size:12px;">${result.message || 'Failed to load'}</td></tr>`;
+                    return;
+                }
+
+                document.getElementById('st-spot').textContent   = result.nifty_spot ? result.nifty_spot.toFixed(2) : '—';
+                document.getElementById('st-atm').textContent    = result.atm_strike || '—';
+                document.getElementById('st-expiry').textContent = result.expiry || '—';
+                document.getElementById('st-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+                const rows = result.data || [];
+                const lowestRow = rows.find(r => r.is_lowest);
+                const atmRow    = rows.find(r => r.is_atm);
+
+                if (lowestRow) {
+                    document.getElementById('st-lowest').textContent = `${lowestRow.strike} → ₹${lowestRow.straddle.toFixed(2)}`;
+
+                    // Track day low/high
+                    const p = lowestRow.straddle;
+                    if (straddleDayLow === null || p < straddleDayLow) straddleDayLow = p;
+                    if (straddleDayHigh === null || p > straddleDayHigh) straddleDayHigh = p;
+                    document.getElementById('st-day-low').textContent  = `₹${straddleDayLow.toFixed(2)}`;
+                    document.getElementById('st-day-high').textContent = `₹${straddleDayHigh.toFixed(2)}`;
+
+                    // Premium spike alert (50% / 75% / 100% from day low)
+                    if (straddleDayLow > 0) {
+                        const pct = ((p - straddleDayLow) / straddleDayLow) * 100;
+                        [50, 75, 100].forEach(thresh => {
+                            if (pct >= thresh && !straddleAlertTriggered[thresh]) {
+                                straddleAlertTriggered[thresh] = true;
+                                const bar = document.getElementById('st-alert-bar');
+                                bar.style.display = 'block';
+                                bar.textContent = `🚨 Premium Spike Alert: +${pct.toFixed(1)}% from day low (₹${straddleDayLow.toFixed(2)}) — Current ₹${p.toFixed(2)} at strike ${lowestRow.strike}`;
+                            }
+                        });
+                    }
+
+                    // Update chart — only during market hours (9:15–15:30 IST, Mon–Fri) and skip zero values
+                    const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+                    const day = nowIST.getDay(); // 0=Sun, 6=Sat
+                    const hm = nowIST.getHours() * 100 + nowIST.getMinutes();
+                    if (p > 0 && day >= 1 && day <= 5 && hm >= 915 && hm <= 1530) {
+                        const now = nowIST.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                        straddleChartData.labels.push(now);
+                        straddleChartData.data.push(p);
+                        updateStraddleChart();
+                    }
+                }
+
+                // Render table — show ±3 strikes around lowest
+                const tbody = document.getElementById('st-tbody');
+                tbody.innerHTML = '';
+                const lowestStrike = lowestRow ? lowestRow.strike : (atmRow ? atmRow.strike : null);
+                const visible = lowestStrike ? rows.filter(r => Math.abs(r.strike - lowestStrike) <= 350) : rows;
+
+                visible.forEach(r => {
+                    const isHighlight = r.is_lowest;
+                    const isAtm = r.is_atm;
+                    const bg = isHighlight ? 'background:#1a3a2a;border-left:3px solid #26a69a;' : (isAtm ? 'background:#1a2a3a;' : '');
+                    const fw = isHighlight ? 'font-weight:700;' : '';
+                    tbody.innerHTML += `
+                        <tr style="${bg}${fw}">
+                            <td style="padding:6px 10px;font-size:12px;color:${isHighlight?'#26a69a':'#c9d1d9'};">${r.strike}${isHighlight?' 🎯':''}</td>
+                            <td style="padding:6px 4px;font-size:11px;color:#8b949e;text-align:right;">₹${r.ce_ltp.toFixed(2)}</td>
+                            <td style="padding:6px 4px;font-size:11px;color:#8b949e;text-align:right;">₹${r.pe_ltp.toFixed(2)}</td>
+                            <td style="padding:6px 10px;font-size:12px;color:${isHighlight?'#f0b429':'#e6edf3'};text-align:right;font-weight:600;">₹${r.straddle.toFixed(2)}</td>
+                        </tr>`;
+                });
+
+            } catch(e) {
+                console.error('Straddle load error:', e);
+            }
+        }
+
+        function syncY2Axis() {}
+
+        function updateStraddleChart() {
+            const ctx = document.getElementById('st-chart').getContext('2d');
+            if (!straddleChart) {
+                straddleChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: straddleChartData.labels,
+                        datasets: [{
+                            label: 'ATM Straddle Premium',
+                            data: straddleChartData.data,
+                            borderColor: '#26a69a',
+                            backgroundColor: 'rgba(38,166,154,0.08)',
+                            borderWidth: 1.5,
+                            pointRadius: 0,
+                            fill: true,
+                            tension: 0.2,
+                            yAxisID: 'y'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: false,
+                        plugins: {
+                            legend: { display: false },
+                            zoom: {
+                                zoom: {
+                                    wheel: { enabled: true },
+                                    pinch: { enabled: true },
+                                    mode: 'x',
+                                    onZoom: () => { straddleZoomed = true; }
+                                },
+                                pan: {
+                                    enabled: true,
+                                    mode: 'x',
+                                    onPan: () => { straddleZoomed = true; }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: { ticks: { color: '#555', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: '#21262d' } },
+                            y: { position: 'left', ticks: { color: '#8b949e', font: { size: 10 }, callback: v => '₹' + v.toFixed(0) }, grid: { color: '#21262d' } },
+                            y2: { position: 'right', ticks: { color: '#8b949e', font: { size: 10 }, callback: v => '₹' + v.toFixed(0) }, grid: { drawOnChartArea: false } }
+                        }
+                    },
+                    plugins: [{
+                        id: 'syncY2',
+                        afterUpdate(chart) {
+                            const y = chart.scales['y'];
+                            const y2opts = chart.options.scales.y2;
+                            if (y && y2opts && (y2opts.min !== y.min || y2opts.max !== y.max)) {
+                                y2opts.min = y.min;
+                                y2opts.max = y.max;
+                                // schedule one more render to apply the new limits
+                                setTimeout(() => chart.update('none'), 0);
+                            }
+                        }
+                    }]
+                });
+            } else {
+                straddleChart.data.labels = straddleChartData.labels;
+                straddleChart.data.datasets[0].data = straddleChartData.data;
+                if (!straddleZoomed) {
+                    straddleChart.resetZoom();
+                } else {
+                    straddleChart.update('none');
+                }
+            }
+        }
+
     </script>
 </body>
 

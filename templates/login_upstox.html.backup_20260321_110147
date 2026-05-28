@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Afaaqs Foot Print Server</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #1a1a2e;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .wrapper {
+            display: flex;
+            width: 820px;
+            min-height: 520px;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+        }
+
+        /* Left panel */
+        .left {
+            width: 42%;
+            background: #1e2a3a;
+            padding: 3rem 2.5rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .left h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 2.5rem;
+        }
+
+        .field-label {
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            text-transform: uppercase;
+            color: #8fa3b1;
+            margin-bottom: 6px;
+        }
+
+        .field-input {
+            width: 100%;
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid #3d5166;
+            color: #e0e8f0;
+            font-size: 0.9rem;
+            padding: 6px 0 8px;
+            margin-bottom: 1.8rem;
+            outline: none;
+            transition: border-color 0.2s;
+            font-family: inherit;
+        }
+
+        .field-input:focus { border-bottom-color: #26a69a; }
+        .field-input::placeholder { color: #3d5166; }
+
+        .login-btn {
+            background: #ffffff;
+            color: #1e2a3a;
+            border: none;
+            border-radius: 25px;
+            padding: 0.6rem 2rem;
+            font-size: 0.88rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+            letter-spacing: 0.3px;
+            margin-bottom: 1rem;
+        }
+
+        .login-btn:hover { background: #e0f2f1; transform: translateY(-1px); }
+        .login-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+        .warning-text {
+            font-size: 0.72rem;
+            color: #d29922;
+            margin-top: 0.5rem;
+            line-height: 1.5;
+        }
+
+        .status-msg {
+            margin-top: 0.75rem;
+            font-size: 0.78rem;
+            display: none;
+        }
+        .status-msg.error   { color: #f85149; }
+        .status-msg.success { color: #26a69a; }
+
+        .bottom-note {
+            font-size: 0.72rem;
+            color: #4a6070;
+            padding-top: 2rem;
+        }
+
+        /* Right panel */
+        .right {
+            width: 58%;
+            background: #f0f4f8;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .right svg { width: 100%; max-width: 340px; opacity: 0.85; }
+
+        .right-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #1e2a3a;
+            margin-top: 1.5rem;
+        }
+
+        .right-sub {
+            font-size: 0.78rem;
+            color: #7a8fa0;
+            margin-top: 4px;
+        }
+
+        .dot {
+            position: absolute;
+            border-radius: 50%;
+            background: #c8d8e8;
+        }
+
+        @media (max-width: 640px) {
+            .wrapper { flex-direction: column; width: 95%; }
+            .left, .right { width: 100%; }
+            .right { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="wrapper">
+
+    <!-- Left: Form -->
+    <div class="left">
+        <div>
+            <h1>Login</h1>
+
+            <form id="loginForm">
+                <input type="hidden" id="api_key"    value="cdf3628c-aced-4d3e-b079-10a89f96be5c">
+                <input type="hidden" id="api_secret" value="ezbpksdbmk">
+
+                <div class="field-label">Access Token</div>
+                <input class="field-input" type="text" id="access_token"
+                       placeholder="Paste your daily access token" required>
+
+                <button type="submit" class="login-btn" id="loginBtn">Login</button>
+
+                <div class="status-msg error"   id="errorMessage"></div>
+                <div class="status-msg success" id="successMessage"></div>
+
+                <p class="warning-text">⚠ Restricted Access — Any unauthorized access will be logged and blacklisted.</p>
+            </form>
+        </div>
+
+        <div class="bottom-note">Afaaqs Foot Print Server &nbsp;·&nbsp; Upstox Market Data</div>
+    </div>
+
+    <!-- Right: Illustration -->
+    <div class="right">
+        <div class="dot" style="width:6px;height:6px;top:12%;left:18%;"></div>
+        <div class="dot" style="width:4px;height:4px;top:20%;left:70%;"></div>
+        <div class="dot" style="width:5px;height:5px;top:55%;left:85%;"></div>
+        <div class="dot" style="width:3px;height:3px;top:75%;left:25%;"></div>
+        <div class="dot" style="width:6px;height:6px;top:30%;left:55%;"></div>
+
+        <svg viewBox="0 0 300 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- clouds -->
+            <ellipse cx="150" cy="295" rx="55" ry="18" fill="#dce8f0"/>
+            <ellipse cx="110" cy="290" rx="35" ry="14" fill="#dce8f0"/>
+            <ellipse cx="190" cy="290" rx="35" ry="14" fill="#dce8f0"/>
+            <ellipse cx="150" cy="285" rx="65" ry="20" fill="#e8f0f7"/>
+            <!-- rocket body -->
+            <path d="M150 60 C130 80 122 130 122 180 L178 180 C178 130 170 80 150 60Z" stroke="#1e2a3a" stroke-width="2" fill="white"/>
+            <!-- nose -->
+            <path d="M150 30 C140 45 130 60 130 70 L170 70 C170 60 160 45 150 30Z" stroke="#1e2a3a" stroke-width="2" fill="white"/>
+            <!-- window -->
+            <circle cx="150" cy="120" r="14" stroke="#1e2a3a" stroke-width="2" fill="#e8f4f8"/>
+            <circle cx="150" cy="120" r="8"  stroke="#1e2a3a" stroke-width="1.5" fill="white"/>
+            <!-- fins -->
+            <path d="M122 160 L95 195 L122 185Z" stroke="#1e2a3a" stroke-width="2" fill="white"/>
+            <path d="M178 160 L205 195 L178 185Z" stroke="#1e2a3a" stroke-width="2" fill="white"/>
+            <!-- exhaust -->
+            <path d="M135 180 Q130 210 138 230 Q150 245 162 230 Q170 210 165 180Z" stroke="#1e2a3a" stroke-width="1.5" fill="#f0f4f8"/>
+            <!-- planet -->
+            <circle cx="240" cy="60" r="22" stroke="#1e2a3a" stroke-width="1.5" fill="white"/>
+            <path d="M220 55 Q240 48 260 55" stroke="#1e2a3a" stroke-width="1.5" fill="none"/>
+            <!-- satellite -->
+            <rect x="48" y="75" width="18" height="10" rx="2" stroke="#1e2a3a" stroke-width="1.5" fill="white"/>
+            <line x1="38" y1="80" x2="48" y2="80" stroke="#1e2a3a" stroke-width="1.5"/>
+            <line x1="66" y1="80" x2="76" y2="80" stroke="#1e2a3a" stroke-width="1.5"/>
+            <rect x="30" y="76" width="8" height="8" rx="1" stroke="#1e2a3a" stroke-width="1.5" fill="white"/>
+            <rect x="76" y="76" width="8" height="8" rx="1" stroke="#1e2a3a" stroke-width="1.5" fill="white"/>
+            <!-- comet -->
+            <circle cx="68" cy="155" r="7" stroke="#1e2a3a" stroke-width="1.5" fill="white"/>
+            <path d="M75 148 Q95 138 115 132" stroke="#1e2a3a" stroke-width="1.5" stroke-dasharray="3 3"/>
+        </svg>
+
+        <div class="right-title">Afaaqs Foot Print Server</div>
+        <div class="right-sub">Real-time market footprint analytics</div>
+    </div>
+
+</div>
+
+<script>
+    document.getElementById('loginForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const loginBtn   = document.getElementById('loginBtn');
+        const errorMsg   = document.getElementById('errorMessage');
+        const successMsg = document.getElementById('successMessage');
+
+        errorMsg.style.display = 'none';
+        successMsg.style.display = 'none';
+        loginBtn.disabled = true;
+        loginBtn.textContent = 'Connecting...';
+
+        try {
+            const response = await fetch('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    api_key:      document.getElementById('api_key').value,
+                    api_secret:   document.getElementById('api_secret').value,
+                    access_token: document.getElementById('access_token').value
+                })
+            });
+            const result = await response.json();
+            if (result.success) {
+                successMsg.textContent = '✓ ' + result.message;
+                successMsg.style.display = 'block';
+                setTimeout(() => { window.location.href = '/'; }, 1000);
+            } else {
+                errorMsg.textContent = result.message;
+                errorMsg.style.display = 'block';
+            }
+        } catch (err) {
+            errorMsg.textContent = 'Connection error: ' + err.message;
+            errorMsg.style.display = 'block';
+        } finally {
+            loginBtn.disabled = false;
+            loginBtn.textContent = 'Login';
+        }
+    });
+</script>
+</body>
+</html>
