@@ -18,7 +18,7 @@ class FootprintProcessor:
     def __init__(self):
         self.price_levels = {}  # price -> {buy_qty, sell_qty, total_qty}
         self.tick_size = 0.25
-        self.lot_size = 75
+        self.lot_size = 65
         self.prev_depth = {'buy': [], 'sell': []}  # Store previous depth for comparison
         
     def round_to_tick(self, price):
@@ -214,7 +214,9 @@ class DataStorage:
     
     def get_db_path(self, symbol):
         """Get database path based on symbol"""
-        if 'BANKNIFTY' in symbol:
+        if symbol in ('NIFTY_CE_ATM', 'NIFTY_PE_ATM'):
+            return 'footprint_data_OPTIONS_ATM.db'
+        elif 'BANKNIFTY' in symbol:
             return 'footprint_data_BANKNIFTY.db'
         elif 'NIFTY' in symbol:
             return 'footprint_data_NIFTY.db'
@@ -286,7 +288,7 @@ class DataStorage:
     
     def cleanup_old_data(self):
         """Remove data older than 180 days from all DBs"""
-        for db_file in ['footprint_data_NIFTY.db', 'footprint_data_BANKNIFTY.db']:
+        for db_file in ['footprint_data_NIFTY.db', 'footprint_data_BANKNIFTY.db', 'footprint_data_OPTIONS_ATM.db']:
             if not os.path.exists(db_file):
                 continue
                 
@@ -460,12 +462,39 @@ class UpstoxAPI:
         self.options_instrument_keys = set()  # currently subscribed option keys
         self.options_meta = []  # [{strike, type, label, instrument_key}, ...]
         self.nifty_spot_ltp = 0  # NIFTY 50 index spot price for ATM calculation
+        self.vix_ltp = 0         # India VIX — updated from NSE_INDEX|India VIX
         # OI history for change tracking: instrument_key -> [(timestamp_ms, oi), ...]
         self.oi_history = {}
         # LTP history for RoC tracking: instrument_key -> [(timestamp_ms, ltp), ...]
         self.ltp_history = {}
         # NIFTY spot history for RoC denominator: [(timestamp_ms, spot), ...]
         self.nifty_history = []
+
+        # ATM options footprint tracking (CE and PE separately)
+        # Each: {'open', 'high', 'low', 'close', 'ts', 'vol', 'prev_volume', 'prev_ltp', 'prev_close', 'prev_category'}
+        self.atm_ce_candle = None
+        self.atm_pe_candle = None
+        self.atm_ce_prev_volume = 0
+        self.atm_pe_prev_volume = 0
+        self.atm_ce_prev_ltp = 0
+        self.atm_pe_prev_ltp = 0
+        self.atm_ce_prev_close = 0
+        self.atm_pe_prev_close = 0
+        self.atm_ce_prev_category = 'buy'
+        self.atm_pe_prev_category = 'buy'
+        self.atm_ce_fp_processor = FootprintProcessor()
+        self.atm_pe_fp_processor = FootprintProcessor()
+        self.atm_ce_fp_processor.lot_size = 1   # options VTT is raw contracts, not lots
+        self.atm_pe_fp_processor.lot_size = 1
+        self.atm_ce_fp_processor.tick_size = 0.05  # options tick size
+        self.atm_pe_fp_processor.tick_size = 0.05
+
+        # Locked ATM for options footprint chart — set ONCE at login, never changes intraday
+        # This ensures the footprint chart always tracks the same CE/PE contract all day
+        self.atm_fp_strike = None       # e.g. 24500  — locked at login
+        self.atm_fp_ce_key = None       # instrument_key for the locked ATM CE
+        self.atm_fp_pe_key = None       # instrument_key for the locked ATM PE
+        self.atm_fp_expiry = None       # expiry string for display
 
         # WebSocket Client
         self.ws_client = None
@@ -532,6 +561,8 @@ class UpstoxAPI:
         self.ws_client.subscribe({self.instrument_token}, mode="full")
         # Also subscribe NIFTY 50 spot index for accurate ATM strike calculation
         self.ws_client.subscribe({'NSE_INDEX|Nifty 50'}, mode="ltpc")
+        # Also subscribe India VIX for the time-based analysis tab
+        self.ws_client.subscribe({'NSE_INDEX|India VIX'}, mode="ltpc")
         print("📡 Started Upstox WebSocket V3")
 
         # Subscribe NIFTY options strikes in background
@@ -635,6 +666,28 @@ class UpstoxAPI:
                 self.ws_client.subscribe(new_keys, mode="full")
                 print(f"📡 Subscribed {len(new_keys)} NIFTY option strikes (ATM={atm_strike}, expiry={nearest_expiry})")
 
+                # Lock the ATM for the options footprint chart on FIRST subscription only.
+                # Once set, atm_fp_strike never changes for the rest of the day — the footprint
+                # chart always tracks the same CE/PE contract regardless of where spot moves.
+                if self.atm_fp_strike is None:
+                    ce_key = opt_lookup.get((float(atm_strike), 'CE'))
+                    pe_key = opt_lookup.get((float(atm_strike), 'PE'))
+                    self.atm_fp_strike = atm_strike
+                    self.atm_fp_ce_key = ce_key
+                    self.atm_fp_pe_key = pe_key
+                    self.atm_fp_expiry = nearest_expiry.strftime('%d %b %Y')
+                    print(f"🔒 Locked ATM footprint strike: {atm_strike} | CE={ce_key} | PE={pe_key}")
+
+                # Reset ATM options footprint volume tracking state so stale cumulative
+                # VTT doesn't produce a massive spike on the first tick after re-subscription.
+                # We do NOT reset when ATM shifts — the locked keys are unaffected anyway.
+                self.atm_ce_candle = None
+                self.atm_pe_candle = None
+                self.atm_ce_prev_volume = 0
+                self.atm_pe_prev_volume = 0
+                self.atm_ce_prev_ltp = 0
+                self.atm_pe_prev_ltp = 0
+
         except Exception as e:
             print(f"❌ Error subscribing options strikes: {e}")
 
@@ -705,8 +758,102 @@ class UpstoxAPI:
             except Exception as e:
                 print(f"❌ ATM monitor error: {e}")
 
+    def _process_atm_option_footprint(self, opt_type, ltp, vtt, current_ts):
+        """
+        Build 1-minute candles + footprint for the ATM CE or PE option and
+        emit via Socket.IO as 'options_fp_data' with field 'opt_type': 'CE'/'PE'.
+        Also persist to footprint_data_OPTIONS_ATM.db.
+        """
+        try:
+            timeframe_ms = 60000  # always 1-min for options footprint
+            candle_ts = int(current_ts // timeframe_ms) * timeframe_ms
+            symbol = f'NIFTY_{opt_type}_ATM'
+
+            if opt_type == 'CE':
+                current_candle = self.atm_ce_candle
+                prev_volume    = self.atm_ce_prev_volume
+                prev_close     = self.atm_ce_prev_close
+                prev_category  = self.atm_ce_prev_category
+                fp_proc        = self.atm_ce_fp_processor
+            else:
+                current_candle = self.atm_pe_candle
+                prev_volume    = self.atm_pe_prev_volume
+                prev_close     = self.atm_pe_prev_close
+                prev_category  = self.atm_pe_prev_category
+                fp_proc        = self.atm_pe_fp_processor
+
+            # Candle bucketing
+            if current_candle and abs(current_candle['ts'] - candle_ts) < 1000:
+                current_candle['high']  = max(current_candle['high'], ltp)
+                current_candle['low']   = min(current_candle['low'], ltp)
+                current_candle['close'] = ltp
+            else:
+                current_candle = {
+                    'open': ltp, 'high': ltp, 'low': ltp, 'close': ltp,
+                    'vol': 0, 'ts': candle_ts
+                }
+
+            # Volume diff
+            if prev_volume == 0:
+                prev_volume = vtt
+                volume_diff = 0
+            else:
+                volume_diff = max(0, vtt - prev_volume)
+                prev_volume = vtt
+
+            # Footprint — use raw volume diff for options (no lot-size flooring needed)
+            footprint_levels = []
+            if volume_diff > 0:
+                footprint_levels, new_category = fp_proc.process_intrabar_footprint(
+                    price=ltp,
+                    volume_diff=volume_diff,
+                    open_price=current_candle['open'],
+                    prev_close=prev_close,
+                    prev_category=prev_category
+                )
+                prev_category = new_category
+
+            base_update = {
+                'symbol':    symbol,
+                'opt_type':  opt_type,
+                'timestamp': int(current_candle['ts']),
+                'open':      current_candle['open'],
+                'high':      current_candle['high'],
+                'low':       current_candle['low'],
+                'close':     current_candle['close'],
+                'ltp':       ltp,
+                'volume':    vtt,
+                'volume_diff': volume_diff,
+                'historical': False
+            }
+
+            if footprint_levels:
+                for level in footprint_levels:
+                    update = base_update.copy()
+                    update['footprint_level'] = level
+                    socketio.emit('options_fp_data', update, room=self.user_id)
+                    data_storage.store_candle(update, '1')
+            else:
+                socketio.emit('options_fp_data', base_update, room=self.user_id)
+                data_storage.store_candle(base_update, '1')
+
+            # Write back updated state
+            prev_close = current_candle['close']
+            if opt_type == 'CE':
+                self.atm_ce_candle        = current_candle
+                self.atm_ce_prev_volume   = prev_volume
+                self.atm_ce_prev_close    = prev_close
+                self.atm_ce_prev_category = prev_category
+            else:
+                self.atm_pe_candle        = current_candle
+                self.atm_pe_prev_volume   = prev_volume
+                self.atm_pe_prev_close    = prev_close
+                self.atm_pe_prev_category = prev_category
+
+        except Exception as e:
+            print(f"❌ ATM options footprint error ({opt_type}): {e}")
+
     def process_websocket_data(self, data):
-        """Process incoming WebSocket data"""
         try:
             feeds = data.get('feeds', {})
             current_ts = int(data.get('currentTs', time.time() * 1000))
@@ -723,6 +870,15 @@ class UpstoxAPI:
                         self.nifty_history.append((current_ts, ltp_val))
                         cutoff_n = current_ts - 5 * 60 * 1000
                         self.nifty_history = [(t, v) for t, v in self.nifty_history if t >= cutoff_n]
+                    continue
+
+                # ── India VIX ────────────────────────────────────────
+                if instrument_key == 'NSE_INDEX|India VIX':
+                    ltpc = feed_data.get('ltpc') \
+                           or (feed_data.get('fullFeed') or {}).get('indexFF', {}).get('ltpc', {})
+                    vix_val = ltpc.get('ltp', 0) if ltpc else 0
+                    if vix_val:
+                        self.vix_ltp = round(vix_val, 2)
                     continue
 
                 # ── Options cache update ──────────────────────────────
@@ -758,6 +914,25 @@ class UpstoxAPI:
                             lhist.append((current_ts, ltp_val))
                             cutoff_ltp = current_ts - 5 * 60 * 1000
                             self.ltp_history[instrument_key] = [(t, v) for t, v in lhist if t >= cutoff_ltp]
+
+                        # ── ATM Options Footprint Processing ─────────────────────
+                        # Use the locked ATM strike/keys (set at login, fixed for the day).
+                        # This ensures the footprint chart always tracks the same CE/PE
+                        # contract regardless of where the spot moves later in the day.
+                        if self.atm_fp_ce_key and instrument_key == self.atm_fp_ce_key and ltp_val > 0:
+                            self._process_atm_option_footprint(
+                                opt_type='CE',
+                                ltp=ltp_val,
+                                vtt=int(full.get('vtt', 0) or 0),
+                                current_ts=current_ts
+                            )
+                        elif self.atm_fp_pe_key and instrument_key == self.atm_fp_pe_key and ltp_val > 0:
+                            self._process_atm_option_footprint(
+                                opt_type='PE',
+                                ltp=ltp_val,
+                                vtt=int(full.get('vtt', 0) or 0),
+                                current_ts=current_ts
+                            )
                     continue  # don't process options as futures candles
 
                 if instrument_key != self.instrument_token:
@@ -1004,7 +1179,7 @@ def change_instrument():
     data = request.json
     symbol = data.get('symbol', 'NIFTY_NOV')
     instrument_token = data.get('instrument_token', 'NSE_FO|50971')
-    lot_size = data.get('lot_size', 75)  # Get lot size from request
+    lot_size = data.get('lot_size', 65)  # Get lot size from request (NIFTY default = 65)
     
     user_id = session['user_id']
     upstox = authenticated_users[user_id]
@@ -1451,6 +1626,427 @@ def get_option_chain_full():
             'rows':       rows,
         })
     except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/options-footprint-data')
+def get_options_footprint_data():
+    """Return stored ATM CE/PE footprint candle data from footprint_data_OPTIONS_ATM.db"""
+    if 'user_id' not in session or session['user_id'] not in authenticated_users:
+        return jsonify({'success': False}), 401
+
+    user_id = session['user_id']
+    upstox = authenticated_users[user_id]
+    opt_type = request.args.get('type', 'CE').upper()   # 'CE' or 'PE'
+    days = int(request.args.get('days', 6))
+    symbol = f'NIFTY_{opt_type}_ATM'
+
+    try:
+        raw_data = data_storage.get_stored_data(symbol, timeframe='1', days=days)
+        return jsonify({
+            'success':      True,
+            'data':         raw_data,
+            'count':        len(raw_data),
+            'opt_type':     opt_type,
+            'locked_strike': upstox.atm_fp_strike,
+            'locked_expiry': upstox.atm_fp_expiry,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/tba-snapshot')
+def get_tba_snapshot():
+    """
+    Returns a single Time-Based Analysis snapshot with all columns needed for the
+    NIFTY Option Chain Time-Based Analysis tab:
+      - Nifty Spot, PCR, Put OI (ATM & ATM-1), Call OI (ATM & ATM+1),
+        IV (ATM straddle avg), VIX, Support/Resistance, Max Pain,
+        Futures OI Change %, Bias
+    """
+    import math
+
+    if 'user_id' not in session or session['user_id'] not in authenticated_users:
+        return jsonify({'success': False}), 401
+
+    user_id = session['user_id']
+    upstox = authenticated_users[user_id]
+
+    try:
+        if not upstox.options_meta:
+            return jsonify({'success': False, 'message': 'Options data loading — please retry'})
+
+        nifty_spot = upstox.nifty_spot_ltp or upstox.prev_ltp
+        atm_strike = round(nifty_spot / 50) * 50 if nifty_spot else None
+        expiry = upstox.options_meta[0].get('expiry', '—') if upstox.options_meta else '—'
+        now_ist = datetime.now()  # server runs in UTC on VPS — adjusted below
+        try:
+            import pytz
+            ist = pytz.timezone('Asia/Kolkata')
+            now_ist = datetime.now(ist)
+        except Exception:
+            from datetime import timezone, timedelta as td
+            now_ist = datetime.now(timezone(td(hours=5, minutes=30)))
+
+        # ── Build strike → CE/PE OI + volume map ──────────────────────
+        strike_data = {}  # strike -> {ce_oi, pe_oi, ce_vol, pe_vol, ce_ltp, pe_ltp}
+        for meta in upstox.options_meta:
+            strike = meta['strike']
+            ikey = meta.get('instrument_key')
+            cached = upstox.options_cache.get(ikey, {}) if ikey else {}
+            oi  = cached.get('oi', 0)
+            vol = cached.get('volume', 0)
+            ltp = cached.get('ltp', 0)
+            if strike not in strike_data:
+                strike_data[strike] = {'ce_oi': 0, 'pe_oi': 0, 'ce_vol': 0, 'pe_vol': 0,
+                                       'ce_ltp': 0, 'pe_ltp': 0}
+            if meta['type'] == 'CE':
+                strike_data[strike]['ce_oi']  = oi
+                strike_data[strike]['ce_vol'] = vol
+                strike_data[strike]['ce_ltp'] = ltp
+            else:
+                strike_data[strike]['pe_oi']  = oi
+                strike_data[strike]['pe_vol'] = vol
+                strike_data[strike]['pe_ltp'] = ltp
+
+        # ── PCR — from Upstox /v2/market/pcr API ──────────────────────
+        # Converts expiry from '05 Jun 2026' → '2026-06-05' for the API
+        pcr = None
+        try:
+            expiry_dt  = datetime.strptime(expiry, '%d %b %Y')
+            expiry_api = expiry_dt.strftime('%Y-%m-%d')
+            today_api  = datetime.now().strftime('%Y-%m-%d')
+            pcr_resp = requests.get(
+                'https://api.upstox.com/v2/market/pcr',
+                params={
+                    'instrument_key':  'NSE_INDEX|Nifty 50',
+                    'expiry':          expiry_api,
+                    'date':            today_api,
+                    'bucket_interval': 5,   # 5-min buckets to match snapshot cadence
+                },
+                headers={
+                    'Content-Type': 'application/json',
+                    'Accept':       'application/json',
+                    'Authorization': f'Bearer {upstox.access_token}',
+                },
+                timeout=4
+            )
+            if pcr_resp.status_code == 200:
+                pcr_json = pcr_resp.json()
+                d = pcr_json.get('data', {})
+
+                # Try top-level pcr field first (overall day PCR)
+                raw = d.get('pcr')
+
+                # If not present, fall back to latest entry in intraday_insights array
+                if raw is None:
+                    insights = d.get('intraday_insights') or d.get('insights') or []
+                    if insights:
+                        raw = insights[-1].get('pcr')
+
+                # Some responses nest under a list directly at data level
+                if raw is None and isinstance(d, list) and d:
+                    raw = d[-1].get('pcr')
+
+                if raw is not None:
+                    pcr = round(float(raw), 2)
+                else:
+                    print(f"⚠️ PCR API: unexpected response shape — {str(pcr_json)[:200]}")
+            else:
+                print(f"⚠️ PCR API HTTP {pcr_resp.status_code}: {pcr_resp.text[:200]}")
+        except Exception as pcr_err:
+            print(f"⚠️ PCR API error: {pcr_err}")
+
+        # Fallback: compute PCR locally from subscribed strikes OI if API failed
+        if pcr is None:
+            total_ce_oi = sum(v['ce_oi'] for v in strike_data.values())
+            total_pe_oi = sum(v['pe_oi'] for v in strike_data.values())
+            pcr = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else None
+            if pcr:
+                print(f"ℹ️ PCR: using local fallback ({pcr})")
+
+        # ── Put OI & Call OI — ATM and ATM±1 strike ───────────────────
+        atm_minus1 = atm_strike - 50 if atm_strike else None
+        atm_plus1  = atm_strike + 50 if atm_strike else None
+
+        def oi_desc(strike, side):
+            """Return OI and volume for a strike/side as a dict."""
+            d = strike_data.get(strike, {})
+            oi_val  = d.get(f'{side}_oi', 0)
+            vol_val = d.get(f'{side}_vol', 0)
+            ltp_val = d.get(f'{side}_ltp', 0)
+            return {'strike': strike, 'oi': oi_val, 'volume': vol_val, 'ltp': ltp_val}
+
+        put_atm   = oi_desc(atm_strike, 'pe') if atm_strike else {}
+        put_atm_m1 = oi_desc(atm_minus1, 'pe') if atm_minus1 else {}
+        call_atm  = oi_desc(atm_strike, 'ce') if atm_strike else {}
+        call_atm_p1 = oi_desc(atm_plus1, 'ce') if atm_plus1 else {}
+
+        # ── Max Pain — from Upstox /v2/market/max-pain API ────────────
+        # Uses insights[-1].max_pain for the most recent intraday value.
+        # Falls back to data.max_pain (end-of-day overall) if insights not yet available,
+        # and finally falls back to local calculation if the API fails entirely.
+        max_pain_strike = None
+        try:
+            expiry_dt_mp  = datetime.strptime(expiry, '%d %b %Y')
+            expiry_api_mp = expiry_dt_mp.strftime('%Y-%m-%d')
+            today_api_mp  = datetime.now().strftime('%Y-%m-%d')
+            mp_resp = requests.get(
+                'https://api.upstox.com/v2/market/max-pain',
+                params={
+                    'instrument_key':  'NSE_INDEX|Nifty 50',
+                    'expiry':          expiry_api_mp,
+                    'date':            today_api_mp,
+                    'bucket_interval': 5,   # 5-min buckets for intraday granularity
+                },
+                headers={
+                    'Content-Type': 'application/json',
+                    'Accept':       'application/json',
+                    'Authorization': f'Bearer {upstox.access_token}',
+                },
+                timeout=4
+            )
+            if mp_resp.status_code == 200:
+                mp_json = mp_resp.json()
+                mp_data = mp_json.get('data', {})
+
+                # Prefer the latest intraday insight (most current value during market hours)
+                insights = mp_data.get('insights', [])
+                if insights:
+                    raw_mp = insights[-1].get('max_pain')
+                else:
+                    # Fall back to overall day max_pain field
+                    raw_mp = mp_data.get('max_pain')
+
+                if raw_mp is not None:
+                    max_pain_strike = int(float(raw_mp))
+                else:
+                    print(f"⚠️ Max Pain API: no value in response — {str(mp_json)[:200]}")
+            else:
+                print(f"⚠️ Max Pain API HTTP {mp_resp.status_code}: {mp_resp.text[:200]}")
+        except Exception as mp_err:
+            print(f"⚠️ Max Pain API error: {mp_err}")
+
+        # Fallback: local max pain calculation from subscribed strikes OI
+        if max_pain_strike is None:
+            strikes_sorted = sorted(strike_data.keys())
+            min_pain = float('inf')
+            for test_strike in strikes_sorted:
+                pain = 0
+                for s, d in strike_data.items():
+                    pain += max(0, test_strike - s) * d['ce_oi']
+                    pain += max(0, s - test_strike) * d['pe_oi']
+                if pain < min_pain:
+                    min_pain = pain
+                    max_pain_strike = int(test_strike)
+            if max_pain_strike:
+                print(f"ℹ️ Max Pain: using local fallback ({max_pain_strike})")
+
+        # ── IV (ATM straddle average) ──────────────────────────────────
+        try:
+            expiry_date = datetime.strptime(expiry, '%d %b %Y').date()
+            dte = max((expiry_date - datetime.now().date()).days, 0)
+        except Exception:
+            dte = 1
+        T = max(dte / 365.0, 1 / 365.0)
+        r = 0.065
+
+        def bs_call(S, K, T, r, sigma):
+            d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+            d2 = d1 - sigma * math.sqrt(T)
+            N = lambda x: 0.5 * (1 + math.erf(x / math.sqrt(2)))
+            return S * N(d1) - K * math.exp(-r * T) * N(d2)
+
+        def bs_put(S, K, T, r, sigma):
+            d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+            d2 = d1 - sigma * math.sqrt(T)
+            N = lambda x: 0.5 * (1 + math.erf(x / math.sqrt(2)))
+            return K * math.exp(-r * T) * N(-d2) - S * N(-d1)
+
+        def calc_iv_nr(market_price, S, K, T, r, opt_type):
+            if market_price <= 0 or S <= 0 or K <= 0 or T <= 0:
+                return None
+            intrinsic = max(S - K, 0) if opt_type == 'CE' else max(K - S, 0)
+            if market_price < intrinsic * 0.99:
+                return None
+            sigma = 0.3
+            for _ in range(100):
+                price = bs_call(S, K, T, r, sigma) if opt_type == 'CE' else bs_put(S, K, T, r, sigma)
+                d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+                vega = S * math.exp(-0.5 * d1**2) / math.sqrt(2 * math.pi) * math.sqrt(T)
+                if vega < 1e-10:
+                    break
+                diff = price - market_price
+                sigma -= diff / vega
+                if sigma <= 0:
+                    sigma = 1e-6
+                if abs(diff) < 0.001:
+                    break
+            return round(sigma * 100, 2) if 0 < sigma < 5 else None
+
+        atm_ce_ltp = strike_data.get(atm_strike, {}).get('ce_ltp', 0) if atm_strike else 0
+        atm_pe_ltp = strike_data.get(atm_strike, {}).get('pe_ltp', 0) if atm_strike else 0
+        iv_ce = calc_iv_nr(atm_ce_ltp, nifty_spot, atm_strike, T, r, 'CE') if (atm_ce_ltp and nifty_spot and atm_strike) else None
+        iv_pe = calc_iv_nr(atm_pe_ltp, nifty_spot, atm_strike, T, r, 'PE') if (atm_pe_ltp and nifty_spot and atm_strike) else None
+        iv_avg = None
+        if iv_ce and iv_pe:
+            iv_avg = round((iv_ce + iv_pe) / 2, 1)
+        elif iv_ce:
+            iv_avg = iv_ce
+        elif iv_pe:
+            iv_avg = iv_pe
+
+        # ── Support & Resistance via OI concentration ──────────────────
+        # Resistance: top CE OI strikes (sellers defend)
+        # Support:    top PE OI strikes (sellers defend)
+        ce_oi_sorted = sorted([(s, d['ce_oi']) for s, d in strike_data.items() if d['ce_oi'] > 0],
+                               key=lambda x: x[1], reverse=True)
+        pe_oi_sorted = sorted([(s, d['pe_oi']) for s, d in strike_data.items() if d['pe_oi'] > 0],
+                               key=lambda x: x[1], reverse=True)
+
+        resistance_strikes = [s for s, _ in ce_oi_sorted[:2]]
+        support_strikes    = [s for s, _ in pe_oi_sorted[:2]]
+
+        def sr_label(strikes, sr_type):
+            if not strikes:
+                return f'No {sr_type} data'
+            parts = []
+            for s in strikes:
+                oi_v = strike_data[s]['ce_oi'] if sr_type == 'Resistance' else strike_data[s]['pe_oi']
+                parts.append(f'{int(s)} ({_fmt_oi(oi_v)})')
+            return ', '.join(parts)
+
+        def _fmt_oi(v):
+            if v >= 10000000: return f'{v/10000000:.1f}Cr'
+            if v >= 100000:   return f'{v/100000:.1f}L'
+            if v >= 1000:     return f'{v/1000:.0f}K'
+            return str(v)
+
+        # SR analysis text: compare highest PE OI (support) vs highest CE OI (resistance)
+        sr_lines = []
+        if support_strikes:
+            s_strike = support_strikes[0]
+            s_oi = strike_data[s_strike]['pe_oi']
+            # Check if support is holding (i.e. OI not rapidly declining)
+            s_ikey = next((m['instrument_key'] for m in upstox.options_meta
+                           if m['strike'] == s_strike and m['type'] == 'PE'), None)
+            s_hist = upstox.oi_history.get(s_ikey, []) if s_ikey else []
+            s_hold = 'Holding' if (len(s_hist) < 3 or s_hist[-1][1] >= s_hist[-3][1]) else 'Under Pressure'
+            sr_lines.append(f'Support: {int(s_strike)} {s_hold}')
+        if resistance_strikes:
+            r_strike = resistance_strikes[0]
+            r_ikey = next((m['instrument_key'] for m in upstox.options_meta
+                           if m['strike'] == r_strike and m['type'] == 'CE'), None)
+            r_hist = upstox.oi_history.get(r_ikey, []) if r_ikey else []
+            r_hold = 'Holding' if (len(r_hist) < 3 or r_hist[-1][1] >= r_hist[-3][1]) else 'Under Pressure'
+            sr_lines.append(f'Resistance: {int(r_strike)} {r_hold}')
+        sr_text = ' / '.join(sr_lines) if sr_lines else '—'
+
+        # ── Futures OI Change % ────────────────────────────────────────
+        # Use the last 2 stored 1-min candles from the futures DB
+        fut_oi_chg = None
+        try:
+            db_path = data_storage.get_db_path(upstox.current_symbol)
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute('''SELECT volume FROM candles WHERE symbol=? AND timeframe='1'
+                           ORDER BY timestamp DESC LIMIT 2''', (upstox.current_symbol,))
+            vols = [r[0] for r in cur.fetchall()]
+            conn.close()
+            if len(vols) == 2 and vols[1] > 0:
+                fut_oi_chg = round((vols[0] - vols[1]) / vols[1] * 100, 2)
+        except Exception:
+            pass
+
+        # ── Bias ───────────────────────────────────────────────────────
+        # Simple heuristic:
+        #   PCR > 1.3  → Strong Bullish
+        #   PCR > 1.1  → Bullish
+        #   PCR > 0.9  → Neutral
+        #   PCR > 0.7  → Bearish
+        #   PCR <= 0.7 → Strong Bearish
+        # Modified by support/resistance OI comparison
+        bias = 'Neutral'
+        if pcr is not None:
+            if pcr >= 1.4:
+                bias = 'Strong Bullish'
+            elif pcr >= 1.15:
+                bias = 'Bullish'
+            elif pcr >= 0.85:
+                bias = 'Neutral'
+            elif pcr >= 0.65:
+                bias = 'Bearish'
+            else:
+                bias = 'Strong Bearish'
+            # Tilt bias if support is under pressure and price is near support
+            if atm_strike and support_strikes:
+                near_support = abs(nifty_spot - support_strikes[0]) < 75
+                if near_support and 'Under Pressure' in sr_text:
+                    if bias == 'Bullish':
+                        bias = 'Neutral'
+                    elif bias == 'Neutral':
+                        bias = 'Bearish'
+
+        def _vol_label(vol):
+            if vol == 0:
+                return 'Low vol'
+            # Compare to ATM vol as baseline — rough categorisation
+            atm_vol_base = max(strike_data.get(atm_strike, {}).get('ce_vol', 1),
+                               strike_data.get(atm_strike, {}).get('pe_vol', 1), 1)
+            ratio = vol / atm_vol_base
+            if ratio >= 1.5:
+                return 'High volume'
+            elif ratio >= 0.8:
+                return 'Moderate volume'
+            return 'Low volume'
+
+        return jsonify({
+            'success':     True,
+            'time':        now_ist.strftime('%H:%M'),
+            'nifty_spot':  round(nifty_spot, 2) if nifty_spot else None,
+            'pcr':         pcr,
+            'vix':         upstox.vix_ltp if upstox.vix_ltp > 0 else None,
+            'iv':          iv_avg,
+            'expiry':      expiry,
+            'atm_strike':  int(atm_strike) if atm_strike else None,
+            'put_atm': {
+                'strike':    put_atm.get('strike'),
+                'oi':        put_atm.get('oi', 0),
+                'volume':    put_atm.get('volume', 0),
+                'ltp':       put_atm.get('ltp', 0),
+                'vol_label': _vol_label(put_atm.get('volume', 0)),
+            },
+            'put_atm_m1': {
+                'strike':    put_atm_m1.get('strike'),
+                'oi':        put_atm_m1.get('oi', 0),
+                'volume':    put_atm_m1.get('volume', 0),
+                'ltp':       put_atm_m1.get('ltp', 0),
+                'vol_label': _vol_label(put_atm_m1.get('volume', 0)),
+            },
+            'call_atm': {
+                'strike':    call_atm.get('strike'),
+                'oi':        call_atm.get('oi', 0),
+                'volume':    call_atm.get('volume', 0),
+                'ltp':       call_atm.get('ltp', 0),
+                'vol_label': _vol_label(call_atm.get('volume', 0)),
+            },
+            'call_atm_p1': {
+                'strike':    call_atm_p1.get('strike'),
+                'oi':        call_atm_p1.get('oi', 0),
+                'volume':    call_atm_p1.get('volume', 0),
+                'ltp':       call_atm_p1.get('ltp', 0),
+                'vol_label': _vol_label(call_atm_p1.get('volume', 0)),
+            },
+            'support_resistance': sr_text,
+            'support_strikes':    support_strikes,
+            'resistance_strikes': resistance_strikes,
+            'max_pain':    max_pain_strike,
+            'fut_oi_chg':  fut_oi_chg,
+            'bias':        bias,
+        })
+
+    except Exception as e:
+        print(f"❌ TBA snapshot error: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
 

@@ -302,7 +302,7 @@
         <input type="number" id="sellQtyFilter" class="filter-input" placeholder="20000" min="0" value="20000">
 
         <span class="filter-label">Trace</span>
-        <input type="number" id="traceFilter" class="filter-input" placeholder="10000" min="0" value="10000">
+        <input type="number" id="traceFilter" class="filter-input" placeholder="100000" min="0" value="100000">
 
         <span class="filter-label">Alert</span>
         <input type="number" id="alertThreshold" class="filter-input" placeholder="0" min="0" value="0">
@@ -538,11 +538,11 @@
         <div style="overflow-x:auto;">
             <table id="chain-table" style="width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed;">
                 <colgroup>
-                    <!-- CE side: OI, LTP, Open, High, Close, Low -->
-                    <col style="width:7%"><col style="width:7%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:6%">
+                    <!-- CE side: OI, Open, High, Close, Low, LTP (LTP last = closest to Strike) -->
+                    <col style="width:7%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:7%">
                     <!-- Strike -->
                     <col style="width:8%">
-                    <!-- PE side: LTP, Open, High, Close, Low, OI -->
+                    <!-- PE side: LTP, Open, High, Close, Low, OI (LTP first = closest to Strike) -->
                     <col style="width:7%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:7%">
                 </colgroup>
                 <thead>
@@ -553,13 +553,13 @@
                     </tr>
                     <tr style="background:#161b22;">
                         <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">OI</th>
-                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
                         <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Open</th>
                         <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">High</th>
                         <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Close</th>
                         <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Low</th>
+                        <th style="padding:5px 8px;text-align:right;color:#26a69a;border-bottom:1px solid #2B2B43;font-weight:600;">LTP</th>
                         <th style="padding:5px 8px;text-align:center;color:#f0b429;border-bottom:1px solid #2B2B43;font-weight:700;">Strike</th>
-                        <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">LTP</th>
+                        <th style="padding:5px 8px;text-align:right;color:#ef5350;border-bottom:1px solid #2B2B43;font-weight:600;">LTP</th>
                         <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Open</th>
                         <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">High</th>
                         <th style="padding:5px 8px;text-align:right;color:#8b949e;border-bottom:1px solid #2B2B43;">Close</th>
@@ -634,15 +634,148 @@
         </div>
     </div>
 
+    <!-- Options Footprint Chart Panel -->
+    <div id="optfp-panel" style="display:none;position:fixed;top:0;left:48px;right:0;bottom:0;background:#131722;overflow:hidden;z-index:999;box-sizing:border-box;flex-direction:column;">
+        <!-- Toolbar — fully independent from the main chart controls -->
+        <div style="padding:6px 10px;background:rgba(43,43,67,0.97);border-bottom:1px solid #2B2B43;display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex-shrink:0;min-height:44px;">
+            <span style="font-size:12px;color:#26a69a;font-weight:700;white-space:nowrap;">🕯 Options Footprint</span>
+            <span style="color:#8b949e;font-size:11px;white-space:nowrap;">Spot: <strong id="ofp-spot" style="color:#e6edf3;">—</strong></span>
+            <span style="color:#8b949e;font-size:11px;white-space:nowrap;">ATM Lock: <strong id="ofp-atm" style="color:#26a69a;">—</strong></span>
+            <span style="color:#8b949e;font-size:11px;white-space:nowrap;">Expiry: <span id="ofp-expiry" style="color:#f0b429;">—</span></span>
+
+            <div style="width:1px;height:20px;background:#3a3a5c;margin:0 2px;flex-shrink:0;"></div>
+
+            <!-- Timeframe -->
+            <span style="color:#8b949e;font-size:11px;">TF:</span>
+            <button class="btn active" data-ofp-tf="1" style="padding:3px 8px;font-size:11px;min-height:28px;">1m</button>
+            <button class="btn" data-ofp-tf="3" style="padding:3px 8px;font-size:11px;min-height:28px;">3m</button>
+            <button class="btn" data-ofp-tf="5" style="padding:3px 8px;font-size:11px;min-height:28px;">5m</button>
+            <button class="btn" data-ofp-tf="15" style="padding:3px 8px;font-size:11px;min-height:28px;">15m</button>
+
+            <div style="width:1px;height:20px;background:#3a3a5c;margin:0 2px;flex-shrink:0;"></div>
+
+            <!-- Footprint toggle — starts OFF -->
+            <button id="ofp-fp-toggle" class="btn" style="padding:3px 10px;font-size:11px;min-height:28px;background:#2B2B43;border-color:#444;" onclick="toggleOptFP()">⚙️ Footprint OFF</button>
+
+            <div style="width:1px;height:20px;background:#3a3a5c;margin:0 2px;flex-shrink:0;"></div>
+
+            <!-- Buy Qty filter -->
+            <span style="color:#8b949e;font-size:11px;">Buy≥</span>
+            <input type="number" id="ofp-buy-filter" class="filter-input" placeholder="200000" min="0" value="200000"
+                   style="width:65px;" oninput="drawOfpFootprint('CE');drawOfpFootprint('PE');">
+
+            <!-- Sell Qty filter -->
+            <span style="color:#8b949e;font-size:11px;">Sell≥</span>
+            <input type="number" id="ofp-sell-filter" class="filter-input" placeholder="200000" min="0" value="200000"
+                   style="width:65px;" oninput="drawOfpFootprint('CE');drawOfpFootprint('PE');">
+
+            <!-- Trace filter -->
+            <span style="color:#8b949e;font-size:11px;">Trace≥</span>
+            <input type="number" id="ofp-trace" class="filter-input" placeholder="100000" min="0" value="100000"
+                   style="width:65px;" oninput="drawOfpFootprint('CE');drawOfpFootprint('PE');">
+
+            <span id="ofp-status" style="color:#555;font-size:11px;margin-left:auto;"></span>
+        </div>
+
+        <!-- Split chart area: CE left, PE right -->
+        <div style="display:flex;flex:1;min-height:0;overflow:hidden;">
+            <!-- CE Chart -->
+            <div style="flex:1;position:relative;border-right:1px solid #2B2B43;display:flex;flex-direction:column;min-width:0;">
+                <div style="padding:4px 8px;background:#0d1117;border-bottom:1px solid #2B2B43;display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                    <span style="font-size:11px;font-weight:700;color:#26a69a;">📈 ATM CALL (CE)</span>
+                    <span style="font-size:11px;color:#8b949e;">LTP: <strong id="ofp-ce-ltp" style="color:#26a69a;">—</strong></span>
+                    <span style="font-size:11px;color:#8b949e;">Strike: <strong id="ofp-ce-strike" style="color:#e6edf3;">—</strong></span>
+                    <span id="ofp-ce-status" style="font-size:10px;color:#555;margin-left:auto;"></span>
+                </div>
+                <div id="ofp-ce-container" style="flex:1;position:relative;min-height:0;overflow:hidden;">
+                    <canvas id="ofp-ce-fp-canvas" style="position:absolute;top:0;left:0;pointer-events:none;z-index:5;"></canvas>
+                </div>
+            </div>
+            <!-- PE Chart -->
+            <div style="flex:1;position:relative;display:flex;flex-direction:column;min-width:0;">
+                <div style="padding:4px 8px;background:#0d1117;border-bottom:1px solid #2B2B43;display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                    <span style="font-size:11px;font-weight:700;color:#ef5350;">📉 ATM PUT (PE)</span>
+                    <span style="font-size:11px;color:#8b949e;">LTP: <strong id="ofp-pe-ltp" style="color:#ef5350;">—</strong></span>
+                    <span style="font-size:11px;color:#8b949e;">Strike: <strong id="ofp-pe-strike" style="color:#e6edf3;">—</strong></span>
+                    <span id="ofp-pe-status" style="font-size:10px;color:#555;margin-left:auto;"></span>
+                </div>
+                <div id="ofp-pe-container" style="flex:1;position:relative;min-height:0;overflow:hidden;">
+                    <canvas id="ofp-pe-fp-canvas" style="position:absolute;top:0;left:0;pointer-events:none;z-index:5;"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- NIFTY Option Chain Time-Based Analysis Panel -->
+    <div id="tba-panel" style="display:none;position:fixed;top:0;left:48px;right:0;bottom:0;background:#0d1117;overflow:hidden;z-index:999;box-sizing:border-box;flex-direction:column;">
+
+        <!-- Header bar -->
+        <div style="padding:6px 12px;background:#161b22;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0;">
+            <span style="font-size:13px;font-weight:700;color:#f0b429;">📊 NIFTY Option-Chain — Time-Based Analysis</span>
+            <span id="tba-date-label" style="font-size:11px;color:#8b949e;"></span>
+            <span style="font-size:11px;color:#8b949e;margin-left:4px;">Expiry: <span id="tba-expiry" style="color:#f0b429;">—</span></span>
+            <span style="font-size:11px;color:#8b949e;">ATM: <strong id="tba-atm" style="color:#26a69a;">—</strong></span>
+            <span style="font-size:11px;color:#8b949e;">VIX: <strong id="tba-vix-hdr" style="color:#e6edf3;">—</strong></span>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                <span id="tba-next-snap" style="font-size:10px;color:#555;"></span>
+                <button onclick="tbaCaptureNow()" style="padding:3px 10px;font-size:11px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:4px;cursor:pointer;">📸 Capture Now</button>
+                <button onclick="tbaClearRows()" style="padding:3px 10px;font-size:11px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:4px;cursor:pointer;">🗑 Clear</button>
+                <button onclick="tbaExportCSV()" style="padding:3px 10px;font-size:11px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:4px;cursor:pointer;">⬇ CSV</button>
+            </div>
+        </div>
+
+        <!-- Scrollable table area -->
+        <div style="flex:1;overflow:auto;min-height:0;">
+            <table id="tba-table" style="width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed;">
+                <colgroup>
+                    <col style="width:52px;">   <!-- Time -->
+                    <col style="width:88px;">   <!-- Nifty Spot -->
+                    <col style="width:48px;">   <!-- PCR -->
+                    <col style="width:17%;">    <!-- Put OI -->
+                    <col style="width:17%;">    <!-- Call OI -->
+                    <col style="width:44px;">   <!-- IV -->
+                    <col style="width:44px;">   <!-- VIX -->
+                    <col style="width:22%;">    <!-- Support/Resistance -->
+                    <col style="width:62px;">   <!-- Max Pain -->
+                    <col style="width:68px;">   <!-- Fut OI Chg -->
+                    <col style="width:100px;">  <!-- Bias -->
+                </colgroup>
+                <thead>
+                    <tr style="background:#1c2128;position:sticky;top:0;z-index:10;">
+                        <th style="padding:6px 4px;text-align:center;color:#8b949e;border-bottom:2px solid #f0b429;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Time</th>
+                        <th style="padding:6px 4px;text-align:center;color:#8b949e;border-bottom:2px solid #f0b429;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Nifty Spot</th>
+                        <th style="padding:6px 4px;text-align:center;color:#8b949e;border-bottom:2px solid #f0b429;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">PCR</th>
+                        <th style="padding:6px 4px;text-align:center;color:#ef5350;border-bottom:2px solid #f0b429;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Put OI (ATM &amp; -1)</th>
+                        <th style="padding:6px 4px;text-align:center;color:#26a69a;border-bottom:2px solid #f0b429;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Call OI (ATM &amp; +1)</th>
+                        <th style="padding:6px 4px;text-align:center;color:#8b949e;border-bottom:2px solid #f0b429;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">IV</th>
+                        <th style="padding:6px 4px;text-align:center;color:#8b949e;border-bottom:2px solid #f0b429;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">VIX</th>
+                        <th style="padding:6px 4px;text-align:center;color:#8b949e;border-bottom:2px solid #f0b429;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Support / Resistance</th>
+                        <th style="padding:6px 4px;text-align:center;color:#8b949e;border-bottom:2px solid #f0b429;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Max Pain</th>
+                        <th style="padding:6px 4px;text-align:center;color:#8b949e;border-bottom:2px solid #f0b429;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Fut OI Chg</th>
+                        <th style="padding:6px 4px;text-align:center;color:#8b949e;border-bottom:2px solid #f0b429;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Bias</th>
+                    </tr>
+                </thead>
+                <tbody id="tba-tbody">
+                    <tr><td colspan="11" style="text-align:center;color:#555;padding:40px;font-size:12px;">
+                        Snapshots captured every 5 minutes during market hours.<br>
+                        Click <strong style="color:#8b949e;">📸 Capture Now</strong> to take an immediate snapshot.
+                    </td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- Tab Navigation -->
     <div class="tab-nav">
         <button class="tab-btn active" id="tab-chart" onclick="switchTab('chart')" title="Chart">📈</button>
+        <button class="tab-btn" id="tab-optfp" onclick="switchTab('optfp')" title="Options Footprint Chart">🕯</button>
         <button class="tab-btn" id="tab-options" onclick="switchTab('options')" title="Options Chain">⚡</button>
         <button class="tab-btn" id="tab-straddle" onclick="switchTab('straddle')" title="Straddle">🎯</button>
         <button class="tab-btn" id="tab-oi" onclick="switchTab('oi')" title="OI Tracker">📊</button>
         <button class="tab-btn" id="tab-skew" onclick="switchTab('skew')" title="Volatility Skew">📉</button>
         <button class="tab-btn" id="tab-chain" onclick="switchTab('chain')" title="Option Chain">🔗</button>
         <button class="tab-btn" id="tab-roc" onclick="switchTab('roc')" title="Rate of Change">⚡️</button>
+        <button class="tab-btn" id="tab-tba" onclick="switchTab('tba')" title="Option Chain Time Analysis">⏱</button>
     </div>
 
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -1304,7 +1437,7 @@
                         option.value = contract.symbol;
                         option.setAttribute('data-instrument', contract.instrument_key);
                         option.setAttribute('data-tradingsymbol', contract.tradingsymbol);
-                        option.setAttribute('data-lot-size', contract.lot_size || 75);
+                        option.setAttribute('data-lot-size', contract.lot_size || 65);
                         option.textContent = contract.display_name;
 
                         // Select first NIFTY contract by default (nearest expiry, current month)
@@ -1564,12 +1697,19 @@
             document.getElementById('tab-skew').classList.toggle('active', tab === 'skew');
             document.getElementById('tab-chain').classList.toggle('active', tab === 'chain');
             document.getElementById('tab-roc').classList.toggle('active', tab === 'roc');
+            document.getElementById('tab-optfp').classList.toggle('active', tab === 'optfp');
+            document.getElementById('tab-tba').classList.toggle('active', tab === 'tba');
             document.getElementById('options-panel').classList.toggle('visible', tab === 'options');
-            document.getElementById('straddle-panel').style.display = (tab === 'straddle') ? 'flex' : 'none';
-            document.getElementById('oi-panel').style.display = (tab === 'oi') ? 'block' : 'none';
-            document.getElementById('skew-panel').style.display = (tab === 'skew') ? 'block' : 'none';
-            document.getElementById('chain-panel').style.display = (tab === 'chain') ? 'block' : 'none';
-            document.getElementById('roc-panel').style.display = (tab === 'roc') ? 'block' : 'none';
+            document.getElementById('straddle-panel').style.display  = (tab === 'straddle') ? 'flex'  : 'none';
+            document.getElementById('oi-panel').style.display        = (tab === 'oi')       ? 'block' : 'none';
+            document.getElementById('skew-panel').style.display      = (tab === 'skew')     ? 'block' : 'none';
+            document.getElementById('chain-panel').style.display     = (tab === 'chain')    ? 'block' : 'none';
+            document.getElementById('roc-panel').style.display       = (tab === 'roc')      ? 'block' : 'none';
+            document.getElementById('optfp-panel').style.display     = (tab === 'optfp')    ? 'flex'  : 'none';
+            document.getElementById('tba-panel').style.display       = (tab === 'tba')      ? 'flex'  : 'none';
+
+            // Controls bar is only relevant on the Chart tab — hide it everywhere else
+            document.querySelector('.controls').style.display = (tab === 'chart') ? '' : 'none';
 
             if (tab === 'skew' && !skewRefreshTimer) {
                 loadSkew();
@@ -1594,6 +1734,12 @@
             if (tab !== 'roc' && rocRefreshTimer) {
                 clearInterval(rocRefreshTimer);
                 rocRefreshTimer = null;
+            }
+            if (tab === 'optfp') {
+                initOptFPCharts();
+            }
+            if (tab === 'tba') {
+                tbaInitPanel();
             }
         }
 
@@ -1939,8 +2085,17 @@
                 const fmt = v => (v && v > 0) ? v.toFixed(2) : '—';
 
                 const atm = result.atm_strike;
-                const maxCeOI = Math.max(...result.rows.map(r => (r.ce && r.ce.oi) ? r.ce.oi : 0));
-                const maxPeOI = Math.max(...result.rows.map(r => (r.pe && r.pe.oi) ? r.pe.oi : 0));
+
+                // Collect and sort all CE and PE OI values to find top 3
+                const ceOIs = result.rows.map(r => (r.ce && r.ce.oi) ? r.ce.oi : 0).filter(v => v > 0).sort((a, b) => b - a);
+                const peOIs = result.rows.map(r => (r.pe && r.pe.oi) ? r.pe.oi : 0).filter(v => v > 0).sort((a, b) => b - a);
+
+                const maxCeOI  = ceOIs[0] || 0;
+                const maxCeOI2 = ceOIs[1] || 0;
+                const maxCeOI3 = ceOIs[2] || 0;
+                const maxPeOI  = peOIs[0] || 0;
+                const maxPeOI2 = peOIs[1] || 0;
+                const maxPeOI3 = peOIs[2] || 0;
 
                 const html = result.rows.map(row => {
                     const isAtm = row.is_atm;
@@ -1988,15 +2143,15 @@
 
                     return `<tr style="background:${rowBg};border-bottom:1px solid #1e2130;">
                         <td style="${ceCell}color:#a0aec0;font-size:10px;${ce.oi && ce.oi === maxCeOI ? 'background:rgba(255,193,7,0.20);color:#ffc107;font-weight:700;border-radius:3px;' : ''}">${fmtOI(ce.oi)}</td>
-                        <td style="${ceCell}color:${ceLtpColor};${atmFw}">${fmt(ce.ltp)}</td>
                         <td style="${ceCell}color:#8b949e;">${fmt(ce.open)}</td>
                         <td style="${ceCell}color:#26a69a;">${fmt(ce.high)}</td>
                         <td style="${ceCell}color:#8b949e;">${fmt(ce.close)}</td>
                         <td style="${ceCell}color:#ef5350;">${fmt(ce.low)}</td>
+                        <td style="${ceCell}color:${ceLtpColor};${atmFw}border-right:1px solid #2B2B43;">${fmt(ce.ltp)}</td>
                         <td style="padding:5px 8px;text-align:center;background:${isAtm ? 'rgba(240,180,41,0.15)' : '#1a1f2e'};color:${isAtm ? '#f0b429' : '#c9d1d9'};${atmFw}border-left:1px solid #2B2B43;border-right:1px solid #2B2B43;">
                             ${row.strike}${isAtm ? ' ◀' : ''}
                         </td>
-                        <td style="${peCell}color:${peLtpColor};${atmFw}">${fmt(pe.ltp)}</td>
+                        <td style="${peCell}color:${peLtpColor};${atmFw}border-left:1px solid #2B2B43;">${fmt(pe.ltp)}</td>
                         <td style="${peCell}color:#8b949e;">${fmt(pe.open)}</td>
                         <td style="${peCell}color:#26a69a;">${fmt(pe.high)}</td>
                         <td style="${peCell}color:#8b949e;">${fmt(pe.close)}</td>
@@ -2303,6 +2458,774 @@
             }
         }
 
+    </script>
+
+    <script>
+    // ── Options Footprint Chart Tab ─────────────────────────────────────
+    // Two side-by-side LightweightCharts: CE (left) and PE (right)
+    // Each has a canvas footprint overlay showing buy/sell volume per price level
+
+    let ofpCeChart = null, ofpPeChart = null;
+    let ofpCeSeries = null, ofpPeSeries = null;
+    let ofpCeData = [], ofpPeData = [];       // { time, open, high, low, close, footprint_levels:{} }
+    let ofpCeFpCtx = null, ofpPeFpCtx = null;
+    let ofpFpEnabled = false;                  // footprint OFF by default
+    let ofpTimeframe = '1';                   // always 1-min from backend; resample client-side
+    let ofpInitialized = false;
+    let ofpAtmMeta = { ce_strike: null, pe_strike: null };
+
+    function toggleOptFP() {
+        ofpFpEnabled = !ofpFpEnabled;
+        const btn = document.getElementById('ofp-fp-toggle');
+        if (ofpFpEnabled) {
+            btn.textContent = '⚙️ Footprint ON';
+            btn.classList.add('active');
+            btn.style.background = '#26a69a';
+            btn.style.borderColor = '#26a69a';
+        } else {
+            btn.textContent = '⚙️ Footprint OFF';
+            btn.classList.remove('active');
+            btn.style.background = '#2B2B43';
+            btn.style.borderColor = '#444';
+        }
+        drawOfpFootprint('CE');
+        drawOfpFootprint('PE');
+    }
+
+    // Convert epoch-ms timestamp to LightweightCharts IST time (seconds)
+    function ofpTs(ms) {
+        return Math.floor(ms / 1000) + 19800;
+    }
+
+    // Resample flat 1-min candle array to target timeframe (returns same flat list format)
+    function ofpResample(data, tfMin) {
+        if (tfMin <= 1 || data.length === 0) return data;
+        const tfMs = tfMin * 60 * 1000;
+        const buckets = {};
+        data.forEach(c => {
+            const ts = typeof c.timestamp === 'string' ? parseInt(c.timestamp) : c.timestamp;
+            const bkt = Math.floor(ts / tfMs) * tfMs;
+            if (!buckets[bkt]) {
+                buckets[bkt] = { timestamp: bkt, open: c.open, high: c.high, low: c.low, close: c.close, footprint_levels: {} };
+            } else {
+                buckets[bkt].high  = Math.max(buckets[bkt].high, c.high);
+                buckets[bkt].low   = Math.min(buckets[bkt].low, c.low);
+                buckets[bkt].close = c.close;
+            }
+            // Merge footprint levels
+            if (c.footprint_level && c.footprint_level.price != null) {
+                const p = Math.round(c.footprint_level.price * 20) / 20; // 0.05 tick
+                if (!buckets[bkt].footprint_levels[p]) {
+                    buckets[bkt].footprint_levels[p] = { buy_qty: 0, sell_qty: 0 };
+                }
+                buckets[bkt].footprint_levels[p].buy_qty  += (c.footprint_level.buy_qty  || 0);
+                buckets[bkt].footprint_levels[p].sell_qty += (c.footprint_level.sell_qty || 0);
+            }
+        });
+        return Object.values(buckets).sort((a, b) => a.timestamp - b.timestamp);
+    }
+
+    // Build liveData array from flat stored-data response (same shape as futures chart)
+    function ofpBuildLive(flatData) {
+        const candleMap = {};
+        flatData.forEach(item => {
+            const ts = typeof item.timestamp === 'string' ? parseInt(item.timestamp) : item.timestamp;
+            const t = ofpTs(ts);
+            if (!candleMap[t]) {
+                candleMap[t] = {
+                    time: t, open: item.open, high: item.high, low: item.low, close: item.close,
+                    footprint_levels: {}
+                };
+            } else {
+                candleMap[t].high  = Math.max(candleMap[t].high, item.high);
+                candleMap[t].low   = Math.min(candleMap[t].low, item.low);
+                candleMap[t].close = item.close;
+            }
+            if (item.footprint_level && item.footprint_level.price != null) {
+                const p = Math.round(item.footprint_level.price * 20) / 20;
+                if (!candleMap[t].footprint_levels[p]) {
+                    candleMap[t].footprint_levels[p] = { buy_qty: 0, sell_qty: 0 };
+                }
+                candleMap[t].footprint_levels[p].buy_qty  += (item.footprint_level.buy_qty  || 0);
+                candleMap[t].footprint_levels[p].sell_qty += (item.footprint_level.sell_qty || 0);
+            }
+        });
+        return Object.values(candleMap).sort((a, b) => a.time - b.time);
+    }
+
+    function ofpSetupFpCanvas(side) {
+        const containerId = side === 'CE' ? 'ofp-ce-container' : 'ofp-pe-container';
+        const canvasId    = side === 'CE' ? 'ofp-ce-fp-canvas'  : 'ofp-pe-fp-canvas';
+        const container = document.getElementById(containerId);
+        const canvas    = document.getElementById(canvasId);
+        if (!container || !canvas) return null;
+        const rect = container.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width  = rect.width  * dpr;
+        canvas.height = rect.height * dpr;
+        canvas.style.width  = rect.width  + 'px';
+        canvas.style.height = rect.height + 'px';
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+        return ctx;
+    }
+
+    function drawOfpFootprint(side) {
+        const ctx    = side === 'CE' ? ofpCeFpCtx    : ofpPeFpCtx;
+        const chart  = side === 'CE' ? ofpCeChart     : ofpPeChart;
+        const series = side === 'CE' ? ofpCeSeries    : ofpPeSeries;
+        const data   = side === 'CE' ? ofpCeData      : ofpPeData;
+        const containerId = side === 'CE' ? 'ofp-ce-container' : 'ofp-pe-container';
+
+        if (!ctx || !chart || !series || data.length === 0) {
+            if (ctx) {
+                const container = document.getElementById(containerId);
+                if (container) {
+                    const r = container.getBoundingClientRect();
+                    ctx.clearRect(0, 0, r.width, r.height);
+                }
+            }
+            return;
+        }
+
+        const container = document.getElementById(containerId);
+        const rect = container.getBoundingClientRect();
+        ctx.clearRect(0, 0, rect.width, rect.height);
+
+        if (!ofpFpEnabled) return;
+
+        const buyFilter   = parseInt(document.getElementById('ofp-buy-filter').value)  || 0;
+        const sellFilter  = parseInt(document.getElementById('ofp-sell-filter').value) || 0;
+        const traceFilter = parseInt(document.getElementById('ofp-trace').value)        || 0;
+        const visibleRange = chart.timeScale().getVisibleRange();
+        if (!visibleRange) return;
+
+        ctx.font = '10px Arial';
+        ctx.textAlign = 'center';
+
+        data.forEach(candle => {
+            if (candle.time < visibleRange.from || candle.time > visibleRange.to) return;
+            if (!candle.footprint_levels || Object.keys(candle.footprint_levels).length === 0) return;
+
+            const x = chart.timeScale().timeToCoordinate(candle.time);
+            if (x === null) return;
+
+            const sortedLevels = Object.entries(candle.footprint_levels)
+                .map(([price, qty]) => ({ price: parseFloat(price), ...qty }))
+                .sort((a, b) => (a.buy_qty + a.sell_qty) - (b.buy_qty + b.sell_qty));
+
+            sortedLevels.forEach(level => {
+                const y = series.priceToCoordinate(level.price);
+                if (y === null || y < 0 || y > rect.height - 20) return;
+
+                // Trace filter hides values below the threshold entirely
+                const buyMeetsTrace  = traceFilter === 0 || level.buy_qty  >= traceFilter;
+                const sellMeetsTrace = traceFilter === 0 || level.sell_qty >= traceFilter;
+
+                const showBuy  = level.buy_qty  > 0 && buyMeetsTrace;
+                const showSell = level.sell_qty > 0 && sellMeetsTrace;
+
+                // Highlight values that meet the individual qty filters (purple, like futures chart)
+                const highlightBuy  = buyFilter  > 0 && level.buy_qty  >= buyFilter;
+                const highlightSell = sellFilter > 0 && level.sell_qty >= sellFilter;
+
+                const h = 14;
+
+                // Buy box — right of candle centre
+                if (showBuy) {
+                    const txt = ofpFmtNum(level.buy_qty);
+                    const w = ctx.measureText(txt).width + 8;
+                    ctx.fillStyle = highlightBuy ? 'rgba(138,43,226,0.8)' : 'rgba(0,0,0,0)';
+                    ctx.fillRect(x + 14 - w / 2, y - h / 2, w, h);
+                    ctx.strokeStyle = '#26a69a';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(x + 14 - w / 2, y - h / 2, w, h);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillText(txt, x + 14, y + 4);
+                }
+
+                // Sell box — left of candle centre
+                if (showSell) {
+                    const txt = ofpFmtNum(level.sell_qty);
+                    const w = ctx.measureText(txt).width + 8;
+                    ctx.fillStyle = highlightSell ? 'rgba(138,43,226,0.8)' : 'rgba(0,0,0,0)';
+                    ctx.fillRect(x - 14 - w / 2, y - h / 2, w, h);
+                    ctx.strokeStyle = '#ef5350';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(x - 14 - w / 2, y - h / 2, w, h);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillText(txt, x - 14, y + 4);
+                }
+            });
+        });
+    }
+
+    function ofpFmtNum(n) {
+        if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+        if (n >= 1000)    return (n / 1000).toFixed(1) + 'K';
+        return n.toString();
+    }
+
+    function initOptFPCharts() {
+        if (ofpInitialized) {
+            // Re-fit canvases in case tab was resized
+            setTimeout(() => {
+                ofpCeFpCtx = ofpSetupFpCanvas('CE');
+                ofpPeFpCtx = ofpSetupFpCanvas('PE');
+                if (ofpCeChart) { ofpCeChart.applyOptions({ width: document.getElementById('ofp-ce-container').clientWidth, height: document.getElementById('ofp-ce-container').clientHeight }); }
+                if (ofpPeChart) { ofpPeChart.applyOptions({ width: document.getElementById('ofp-pe-container').clientWidth, height: document.getElementById('ofp-pe-container').clientHeight }); }
+                drawOfpFootprint('CE');
+                drawOfpFootprint('PE');
+            }, 50);
+            return;
+        }
+        ofpInitialized = true;
+
+        // Wait a tick for the panel to be visible and have dimensions
+        setTimeout(() => {
+            const ceContainer = document.getElementById('ofp-ce-container');
+            const peContainer = document.getElementById('ofp-pe-container');
+            if (!ceContainer || !peContainer) return;
+
+            const chartOpts = {
+                layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc' },
+                grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+                rightPriceScale: { borderColor: '#2B2B43', autoScale: true },
+                timeScale: { borderColor: '#2B2B43', timeVisible: true, secondsVisible: false },
+                crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+                localization: {
+                    timeFormatter: (time) => {
+                        const utcTime = time - 19800;
+                        const date = new Date(utcTime * 1000);
+                        return date.toLocaleString('en-IN', {
+                            timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short',
+                            hour: '2-digit', minute: '2-digit'
+                        });
+                    }
+                }
+            };
+
+            // CE chart
+            ofpCeChart = LightweightCharts.createChart(ceContainer, {
+                ...chartOpts,
+                width:  ceContainer.clientWidth,
+                height: ceContainer.clientHeight
+            });
+            ofpCeSeries = ofpCeChart.addCandlestickSeries({
+                upColor: '#26a69a', downColor: '#ef5350',
+                borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+            });
+            ofpCeChart.timeScale().subscribeVisibleLogicalRangeChange(() => drawOfpFootprint('CE'));
+
+            // PE chart
+            ofpPeChart = LightweightCharts.createChart(peContainer, {
+                ...chartOpts,
+                width:  peContainer.clientWidth,
+                height: peContainer.clientHeight
+            });
+            ofpPeSeries = ofpPeChart.addCandlestickSeries({
+                upColor: '#26a69a', downColor: '#ef5350',
+                borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+            });
+            ofpPeChart.timeScale().subscribeVisibleLogicalRangeChange(() => drawOfpFootprint('PE'));
+
+            // Setup canvas overlays
+            ofpCeFpCtx = ofpSetupFpCanvas('CE');
+            ofpPeFpCtx = ofpSetupFpCanvas('PE');
+
+            // Load historical data
+            loadOfpHistory('CE');
+            loadOfpHistory('PE');
+
+            // Setup timeframe buttons
+            document.querySelectorAll('[data-ofp-tf]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('[data-ofp-tf]').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    ofpTimeframe = btn.dataset.ofpTf;
+                    loadOfpHistory('CE');
+                    loadOfpHistory('PE');
+                });
+            });
+
+            // Update ATM meta from options chain data
+            ofpUpdateAtmInfo();
+
+        }, 80);
+    }
+
+    async function loadOfpHistory(side) {
+        const statusId = side === 'CE' ? 'ofp-ce-status' : 'ofp-pe-status';
+        try {
+            document.getElementById(statusId).textContent = 'Loading...';
+            const resp = await fetch(`/api/options-footprint-data?type=${side}&days=6`);
+            const result = await resp.json();
+            if (!result.success || !result.data) {
+                document.getElementById(statusId).textContent = result.message || 'No data yet';
+                return;
+            }
+
+            // Show locked ATM strike and expiry in the header (only needs to run once)
+            if (result.locked_strike) {
+                document.getElementById('ofp-atm').textContent = result.locked_strike;
+                const strikeEl = document.getElementById(side === 'CE' ? 'ofp-ce-strike' : 'ofp-pe-strike');
+                if (strikeEl) strikeEl.textContent = result.locked_strike;
+            }
+            if (result.locked_expiry) {
+                document.getElementById('ofp-expiry').textContent = result.locked_expiry;
+            }
+
+            // Resample if needed
+            const resampled = ofpResample(result.data, parseInt(ofpTimeframe));
+            const liveArr   = ofpBuildLive(resampled.length > 0 ? resampled : result.data);
+
+            if (side === 'CE') {
+                ofpCeData = liveArr;
+                if (ofpCeSeries && liveArr.length > 0) {
+                    ofpCeSeries.setData(liveArr.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
+                    drawOfpFootprint('CE');
+                }
+            } else {
+                ofpPeData = liveArr;
+                if (ofpPeSeries && liveArr.length > 0) {
+                    ofpPeSeries.setData(liveArr.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
+                    drawOfpFootprint('PE');
+                }
+            }
+
+            document.getElementById(statusId).textContent =
+                liveArr.length > 0 ? `${liveArr.length} candles loaded` : 'Waiting for first tick...';
+        } catch (e) {
+            document.getElementById(statusId).textContent = 'Error loading data';
+            console.error('Options FP history error:', e);
+        }
+    }
+
+    // Update live CE/PE ATM footprint from Socket.IO event 'options_fp_data'
+    function ofpHandleLiveTick(data) {
+        if (!data || !data.opt_type) return;
+        const side = data.opt_type; // 'CE' or 'PE'
+
+        if (!ofpInitialized) return; // chart not ready yet
+
+        // Update header LTP
+        const ltpEl    = document.getElementById(side === 'CE' ? 'ofp-ce-ltp'    : 'ofp-pe-ltp');
+        const statusEl = document.getElementById(side === 'CE' ? 'ofp-ce-status' : 'ofp-pe-status');
+        if (ltpEl && data.ltp > 0) ltpEl.textContent = '₹' + data.ltp.toFixed(2);
+        if (statusEl) statusEl.textContent = 'Live';
+
+        const chart  = side === 'CE' ? ofpCeChart   : ofpPeChart;
+        const series = side === 'CE' ? ofpCeSeries  : ofpPeSeries;
+        let   liveArr = side === 'CE' ? ofpCeData    : ofpPeData;
+
+        if (!chart || !series) return;
+
+        const ts   = typeof data.timestamp === 'string' ? parseInt(data.timestamp) : data.timestamp;
+        // Snap to selected timeframe bucket
+        const tfMs = parseInt(ofpTimeframe) * 60 * 1000;
+        const bktMs = Math.floor(ts / tfMs) * tfMs;
+        const t = ofpTs(bktMs);
+
+        const idx = liveArr.findIndex(c => c.time === t);
+        if (idx !== -1) {
+            const c = liveArr[idx];
+            c.high  = Math.max(c.high,  data.high  || data.ltp);
+            c.low   = Math.min(c.low,   data.low   || data.ltp);
+            c.close = data.close || data.ltp;
+            // Accumulate footprint
+            if (data.footprint_level && data.footprint_level.price != null) {
+                const p = Math.round(data.footprint_level.price * 20) / 20;
+                if (!c.footprint_levels[p]) c.footprint_levels[p] = { buy_qty: 0, sell_qty: 0 };
+                c.footprint_levels[p].buy_qty  += (data.footprint_level.buy_qty  || 0);
+                c.footprint_levels[p].sell_qty += (data.footprint_level.sell_qty || 0);
+            }
+            series.update({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
+        } else {
+            const newCandle = {
+                time: t, open: data.open || data.ltp, high: data.high || data.ltp,
+                low: data.low || data.ltp, close: data.close || data.ltp, footprint_levels: {}
+            };
+            if (data.footprint_level && data.footprint_level.price != null) {
+                const p = Math.round(data.footprint_level.price * 20) / 20;
+                newCandle.footprint_levels[p] = {
+                    buy_qty:  data.footprint_level.buy_qty  || 0,
+                    sell_qty: data.footprint_level.sell_qty || 0
+                };
+            }
+            liveArr.push(newCandle);
+            liveArr.sort((a, b) => a.time - b.time);
+            series.update({ time: t, open: newCandle.open, high: newCandle.high, low: newCandle.low, close: newCandle.close });
+        }
+
+        if (side === 'CE') ofpCeData = liveArr; else ofpPeData = liveArr;
+
+        if (ofpFpEnabled) drawOfpFootprint(side);
+    }
+
+    async function ofpUpdateAtmInfo() {
+        try {
+            const resp = await fetch('/api/options-chain');
+            const result = await resp.json();
+            if (!result.success) return;
+
+            // Update live spot price only — ATM strike is locked at login and shown via loadOfpHistory
+            document.getElementById('ofp-spot').textContent = result.nifty_ltp ? result.nifty_ltp.toFixed(2) : '—';
+
+            // Update live LTP for the locked ATM CE and PE from the options chain data
+            // The strike labels may shift (e.g. locked ATM is now ITM) but we track by strike value
+            const lockedStrike = parseFloat(document.getElementById('ofp-atm').textContent);
+            if (!isNaN(lockedStrike)) {
+                const lockedCe = result.data.find(r => r.strike === lockedStrike && r.type === 'CE');
+                const lockedPe = result.data.find(r => r.strike === lockedStrike && r.type === 'PE');
+                if (lockedCe && lockedCe.ltp > 0)
+                    document.getElementById('ofp-ce-ltp').textContent = '₹' + lockedCe.ltp.toFixed(2);
+                if (lockedPe && lockedPe.ltp > 0)
+                    document.getElementById('ofp-pe-ltp').textContent = '₹' + lockedPe.ltp.toFixed(2);
+            }
+        } catch (e) {}
+    }
+
+    // Hook into the existing Socket.IO connection — listen for options_fp_data
+    // This runs after initWebSocket() sets up `socket`
+    document.addEventListener('DOMContentLoaded', () => {
+        // Poll to hook into socket once it's ready
+        const hookOfpSocket = setInterval(() => {
+            if (typeof socket !== 'undefined' && socket) {
+                clearInterval(hookOfpSocket);
+                socket.on('options_fp_data', (data) => {
+                    ofpHandleLiveTick(data);
+                    // Also update header LTP from live ticks
+                    if (data.opt_type === 'CE') {
+                        const el = document.getElementById('ofp-ce-ltp');
+                        if (el && data.ltp > 0) el.textContent = '₹' + data.ltp.toFixed(2);
+                    } else {
+                        const el = document.getElementById('ofp-pe-ltp');
+                        if (el && data.ltp > 0) el.textContent = '₹' + data.ltp.toFixed(2);
+                    }
+                });
+                // Refresh ATM info every 5 seconds
+                setInterval(ofpUpdateAtmInfo, 5000);
+            }
+        }, 500);
+    });
+
+    // ── NIFTY Option Chain Time-Based Analysis ──────────────────────────
+    let tbaRows = [];           // array of snapshot objects
+    let tbaTimer = null;        // 5-min interval
+    let tbaCountdown = null;    // countdown display interval
+    let tbaNextAt = null;       // Date when next auto-snap fires
+    let tbaInitialized = false;
+    let tbaPrevSpot = null;     // for spot change arrow
+
+    function tbaInitPanel() {
+        // Set date label
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('en-IN', {
+            timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+        });
+        const el = document.getElementById('tba-date-label');
+        if (el) el.textContent = dateStr;
+
+        if (tbaInitialized) return;
+        tbaInitialized = true;
+
+        // Schedule first auto-snap at 09:18 IST or next :X3/:X8 boundary after market open
+        tbaScheduleNext();
+
+        // Start countdown display
+        tbaCountdown = setInterval(tbaUpdateCountdown, 1000);
+        tbaUpdateCountdown(); // immediate render
+    }
+
+    function tbaScheduleNext() {
+        // Market opens 09:15 IST. Captures fire at the first :X3/:X8 boundary
+        // at or after 09:15, then every 5 min: 09:18, 09:23, 09:28 ... 15:28, 15:33
+        // (minutes % 5 === 3 → HH:03, HH:08, HH:13, HH:18, HH:23 ...)
+        const now    = new Date();
+        const istMs  = now.getTime() + (5.5 * 60 * 60 * 1000) - (now.getTimezoneOffset() * 60 * 1000);
+        const istNow = new Date(istMs);
+        const h      = istNow.getHours();
+        const mins   = istNow.getMinutes();
+        const secs   = istNow.getSeconds();
+        const ms     = istNow.getMilliseconds();
+
+        // Minutes until next (minute % 5 === 3) boundary
+        let minsUntilTarget = (3 - (mins % 5) + 5) % 5;
+        if (minsUntilTarget === 0) minsUntilTarget = 5; // already on boundary → next one
+
+        // Compute the wall-clock IST time of that target
+        let targetH    = h;
+        let targetMins = mins + minsUntilTarget;
+        if (targetMins >= 60) { targetH += 1; targetMins -= 60; }
+
+        // If the target is before 09:18 (first valid slot after market open 09:15),
+        // keep advancing by 5-min steps until we reach 09:18 or later.
+        const MARKET_OPEN_H = 9, MARKET_OPEN_M = 18; // 09:18 is first valid slot
+        while (targetH < MARKET_OPEN_H || (targetH === MARKET_OPEN_H && targetMins < MARKET_OPEN_M)) {
+            targetMins += 5;
+            if (targetMins >= 60) { targetH += 1; targetMins -= 60; }
+        }
+
+        // Milliseconds from now until that target (at :00 secs)
+        const msUntilTarget = ((targetH - h) * 60 + (targetMins - mins)) * 60 * 1000
+                              - secs * 1000 - ms;
+        const delay = msUntilTarget <= 0 ? 5 * 60 * 1000 : msUntilTarget;
+
+        tbaNextAt = new Date(now.getTime() + delay);
+
+        if (tbaTimer) clearTimeout(tbaTimer);
+        tbaTimer = setTimeout(() => {
+            tbaCaptureNow();
+            // After the first aligned fire, repeat every 5 minutes
+            if (tbaTimer) clearInterval(tbaTimer);
+            tbaTimer = setInterval(() => {
+                tbaNextAt = new Date(Date.now() + 5 * 60 * 1000);
+                tbaCaptureNow();
+            }, 5 * 60 * 1000);
+        }, delay);
+    }
+
+    function tbaUpdateCountdown() {
+        const el = document.getElementById('tba-next-snap');
+        if (!el) return;
+
+        // Compute current IST time
+        const istMs  = Date.now() + (5.5 * 60 * 60 * 1000) - (new Date().getTimezoneOffset() * 60 * 1000);
+        const istNow = new Date(istMs);
+        const totalMin = istNow.getHours() * 60 + istNow.getMinutes();
+        const OPEN  = 9 * 60 + 15;   // 09:15
+        const CLOSE = 15 * 60 + 30;  // 15:30
+
+        if (totalMin < OPEN) {
+            el.textContent = 'Market opens at 09:15 IST';
+            return;
+        }
+        if (totalMin >= CLOSE) {
+            el.textContent = 'Market closed';
+            return;
+        }
+        if (!tbaNextAt) return;
+        const diff = Math.max(0, Math.round((tbaNextAt - Date.now()) / 1000));
+        const mm = Math.floor(diff / 60);
+        const ss = diff % 60;
+        el.textContent = `Next snap in ${mm}:${String(ss).padStart(2, '0')}`;
+    }
+
+    async function tbaCaptureNow() {
+        try {
+            const resp = await fetch('/api/tba-snapshot');
+            const d = await resp.json();
+            if (!d.success) {
+                console.warn('TBA snapshot failed:', d.message);
+                return;
+            }
+
+            // Update header
+            const atmEl = document.getElementById('tba-atm');
+            if (atmEl) atmEl.textContent = d.atm_strike || '—';
+            const vixEl = document.getElementById('tba-vix-hdr');
+            if (vixEl) vixEl.textContent = d.vix ? d.vix.toFixed(2) : '—';
+            const expEl = document.getElementById('tba-expiry');
+            if (expEl) expEl.textContent = d.expiry || '—';
+
+            // Store row
+            d._prev_spot = tbaPrevSpot;
+            tbaRows.unshift(d);   // newest at top
+            tbaPrevSpot = d.nifty_spot;
+
+            if (tbaRows.length > 200) tbaRows.pop();
+            tbaRenderTable();
+        } catch (e) {
+            console.error('TBA capture error:', e);
+        }
+    }
+
+    function tbaClearRows() {
+        tbaRows = [];
+        tbaPrevSpot = null;
+        tbaRenderTable();
+    }
+
+    function tbaFmtOI(v) {
+        if (!v || v === 0) return '—';
+        if (v >= 10000000) return (v / 10000000).toFixed(2) + ' Cr';
+        if (v >= 100000)   return (v / 100000).toFixed(1) + ' L';
+        if (v >= 1000)     return (v / 1000).toFixed(0) + ' K';
+        return v.toString();
+    }
+
+    // Returns ▲ or ▼ arrow html comparing current vs previous value.
+    // upIsGood=true → up=green, down=red (PCR, IV bullish interpretation)
+    // upIsGood=false → up=red, down=green (VIX — lower is calmer)
+    function tbaArrow(curr, prev, upIsGood = true) {
+        if (curr == null || prev == null) return '';
+        if (curr > prev) {
+            const color = upIsGood ? '#26a69a' : '#ef5350';
+            return `<span style="color:${color};font-size:10px;"> ▲</span>`;
+        }
+        if (curr < prev) {
+            const color = upIsGood ? '#ef5350' : '#26a69a';
+            return `<span style="color:${color};font-size:10px;"> ▼</span>`;
+        }
+        return `<span style="color:#555;font-size:10px;"> —</span>`;
+    }
+
+    function tbaFmtSpot(spot, prevSpot) {
+        if (!spot) return '—';
+        const s = spot.toFixed(2);
+        if (prevSpot == null) return `<span style="color:#e6edf3;">${s}</span>`;
+        const diff = spot - prevSpot;
+        if (diff > 0)  return `<span style="color:#26a69a;">▲ ${s}</span>`;
+        if (diff < 0)  return `<span style="color:#ef5350;">▼ ${s}</span>`;
+        return `<span style="color:#8b949e;">${s}</span>`;
+    }
+
+    function tbaBiasHtml(bias) {
+        const colors = {
+            'Strong Bullish': { dot: '#26a69a', text: '#26a69a', bg: 'rgba(38,166,154,0.12)' },
+            'Bullish':        { dot: '#4fc3f7', text: '#4fc3f7', bg: 'rgba(79,195,247,0.1)' },
+            'Neutral':        { dot: '#f0b429', text: '#f0b429', bg: 'rgba(240,180,41,0.1)' },
+            'Bearish':        { dot: '#ef5350', text: '#ef5350', bg: 'rgba(239,83,80,0.1)' },
+            'Strong Bearish': { dot: '#b71c1c', text: '#ff5252', bg: 'rgba(183,28,28,0.15)' },
+        };
+        const c = colors[bias] || colors['Neutral'];
+        return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:10px;background:${c.bg};color:${c.text};font-size:10px;font-weight:700;">
+            <span style="width:7px;height:7px;border-radius:50%;background:${c.dot};display:inline-block;flex-shrink:0;"></span>${bias}
+        </span>`;
+    }
+
+    function tbaBuildOICell(atm, atm1, label1, optType) {
+        // optType: 'PE' for the Put OI column, 'CE' for the Call OI column
+        const fmtLine = (d, lbl) => {
+            if (!d || !d.strike) return '';
+            const volLbl = d.vol_label || '';
+            const volColor = volLbl.includes('High') ? '#26a69a' : volLbl.includes('Moderate') ? '#f0b429' : '#555';
+            const strikeLabel = lbl === '' ? 'ATM' : lbl;
+            return `<div style="line-height:1.6;">
+                <span style="color:#e6edf3;font-weight:600;">${d.strike}</span>
+                <span style="color:#8b949e;font-size:9px;"> ${optType} (${strikeLabel}):</span>
+                <span style="color:#c9d1d9;"> ${tbaFmtOI(d.oi)}</span>
+                <span style="color:${volColor};font-size:9px;"> (${volLbl})</span>
+            </div>`;
+        };
+        return fmtLine(atm, '') + fmtLine(atm1, label1);
+    }
+
+    function tbaSRHtml(srText) {
+        if (!srText || srText === '—') return '<span style="color:#555;">—</span>';
+        return srText
+            .replace(/Support:\s*(\d+)/g, '<span style="color:#26a69a;font-weight:600;">Support: $1</span>')
+            .replace(/Resistance:\s*(\d+)/g, '<span style="color:#ef5350;font-weight:600;">Resistance: $1</span>')
+            .replace(/Holding/g, '<span style="color:#26a69a;">Holding</span>')
+            .replace(/Under Pressure/g, '<span style="color:#ef5350;">Under Pressure</span>');
+    }
+
+    function tbaRenderTable() {
+        const tbody = document.getElementById('tba-tbody');
+        if (!tbody) return;
+        if (tbaRows.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:#555;padding:40px;font-size:12px;">
+                Snapshots captured every 5 minutes during market hours.<br>
+                Click <strong style="color:#8b949e;">📸 Capture Now</strong> to take an immediate snapshot.
+            </td></tr>`;
+            return;
+        }
+
+        const html = tbaRows.map((d, idx) => {
+            const isFirst = idx === 0;
+            const rowBg = isFirst ? 'rgba(240,180,41,0.06)' : (idx % 2 === 0 ? '#0d1117' : '#111519');
+
+            // Previous row values for arrows (tbaRows is newest-first, so prev = idx+1)
+            const prev = tbaRows[idx + 1] || null;
+
+            const pcrColor = d.pcr == null ? '#555' :
+                             d.pcr >= 1.3 ? '#26a69a' :
+                             d.pcr >= 1.0 ? '#4fc3f7' :
+                             d.pcr >= 0.8 ? '#f0b429' : '#ef5350';
+            const ivColor  = d.iv  == null ? '#555' : d.iv  > 20 ? '#f0b429' : '#c9d1d9';
+            const vixColor = d.vix == null ? '#555' : d.vix > 20 ? '#ef5350' : d.vix > 15 ? '#f0b429' : '#c9d1d9';
+            const foiColor = d.fut_oi_chg == null ? '#555' : d.fut_oi_chg > 0 ? '#26a69a' : '#ef5350';
+            const foiSign  = d.fut_oi_chg > 0 ? '+' : '';
+            const mpColor  = d.max_pain == null ? '#555' : '#f0b429';
+
+            const putOIHtml  = tbaBuildOICell(d.put_atm,  d.put_atm_m1,  '-1', 'PE');
+            const callOIHtml = tbaBuildOICell(d.call_atm, d.call_atm_p1, '+1', 'CE');
+
+            // Arrows: PCR up=good, IV up=neutral(amber warn), VIX up=bad, MaxPain neutral, FutOI up=good
+            const pcrArrow  = tbaArrow(d.pcr,         prev?.pcr,         true);
+            const ivArrow   = tbaArrow(d.iv,           prev?.iv,          false); // higher IV = more uncertainty
+            const vixArrow  = tbaArrow(d.vix,          prev?.vix,         false); // higher VIX = worse
+            const mpArrow   = tbaArrow(d.max_pain,     prev?.max_pain,    true);  // neutral color via override below
+            const foiArrow  = tbaArrow(d.fut_oi_chg,   prev?.fut_oi_chg,  true);
+
+            // Max pain arrow — grey (directionally neutral metric)
+            const mpArrowNeutral = (() => {
+                if (d.max_pain == null || prev?.max_pain == null) return '';
+                if (d.max_pain > prev.max_pain) return `<span style="color:#8b949e;font-size:10px;"> ▲</span>`;
+                if (d.max_pain < prev.max_pain) return `<span style="color:#8b949e;font-size:10px;"> ▼</span>`;
+                return `<span style="color:#555;font-size:10px;"> —</span>`;
+            })();
+
+            return `<tr style="background:${rowBg};border-bottom:1px solid #1c2128;">
+                <td style="padding:5px 6px;text-align:center;color:#f0b429;font-weight:700;white-space:nowrap;">${d.time || '—'}</td>
+                <td style="padding:5px 4px;text-align:center;white-space:nowrap;">${tbaFmtSpot(d.nifty_spot, d._prev_spot)}</td>
+                <td style="padding:5px 4px;text-align:center;color:${pcrColor};font-weight:600;">${d.pcr != null ? d.pcr.toFixed(2) : '—'}${pcrArrow}</td>
+                <td style="padding:4px 6px;font-size:10px;vertical-align:top;">${putOIHtml}</td>
+                <td style="padding:4px 6px;font-size:10px;vertical-align:top;">${callOIHtml}</td>
+                <td style="padding:5px 4px;text-align:center;color:${ivColor};">${d.iv != null ? d.iv.toFixed(1) : '—'}${ivArrow}</td>
+                <td style="padding:5px 4px;text-align:center;color:${vixColor};">${d.vix != null ? d.vix.toFixed(2) : '—'}${vixArrow}</td>
+                <td style="padding:4px 6px;font-size:10px;line-height:1.5;">${tbaSRHtml(d.support_resistance)}</td>
+                <td style="padding:5px 4px;text-align:center;color:${mpColor};font-weight:600;">${d.max_pain || '—'}${mpArrowNeutral}</td>
+                <td style="padding:5px 4px;text-align:center;color:${foiColor};font-weight:600;">${d.fut_oi_chg != null ? foiSign + d.fut_oi_chg.toFixed(2) + '%' : '—'}${foiArrow}</td>
+                <td style="padding:5px 6px;text-align:center;">${tbaBiasHtml(d.bias || 'Neutral')}</td>
+            </tr>`;
+        }).join('');
+        tbody.innerHTML = html;
+    }
+
+    function tbaExportCSV() {
+        if (tbaRows.length === 0) return;
+        const headers = ['Time','Nifty Spot','PCR','Put ATM OI','Put ATM-1 OI','Call ATM OI','Call ATM+1 OI','IV','VIX','Support/Resistance','Max Pain','Fut OI Chg %','Bias'];
+        const rows = tbaRows.map(d => [
+            d.time || '',
+            d.nifty_spot || '',
+            d.pcr || '',
+            d.put_atm?.oi || '',
+            d.put_atm_m1?.oi || '',
+            d.call_atm?.oi || '',
+            d.call_atm_p1?.oi || '',
+            d.iv || '',
+            d.vix || '',
+            (d.support_resistance || '').replace(/,/g, ';'),
+            d.max_pain || '',
+            d.fut_oi_chg != null ? d.fut_oi_chg.toFixed(2) : '',
+            d.bias || ''
+        ]);
+        const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const dateStr = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }).replace(/\//g, '-');
+        a.href = url; a.download = `nifty_tba_${dateStr}.csv`; a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    // Handle resize for options FP charts
+    window.addEventListener('resize', () => {
+        if (!ofpInitialized) return;
+        const ceContainer = document.getElementById('ofp-ce-container');
+        const peContainer = document.getElementById('ofp-pe-container');
+        if (ofpCeChart && ceContainer) {
+            ofpCeChart.applyOptions({ width: ceContainer.clientWidth, height: ceContainer.clientHeight });
+            ofpCeFpCtx = ofpSetupFpCanvas('CE');
+            drawOfpFootprint('CE');
+        }
+        if (ofpPeChart && peContainer) {
+            ofpPeChart.applyOptions({ width: peContainer.clientWidth, height: peContainer.clientHeight });
+            ofpPeFpCtx = ofpSetupFpCanvas('PE');
+            drawOfpFootprint('PE');
+        }
+    });
     </script>
 </body>
 

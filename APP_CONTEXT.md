@@ -2,12 +2,67 @@
 
 This document provides a complete reference for any AI system or developer working on this application.
 
+**Table of Contents:**
+- [Quick Summary](#quick-summary) — What the app does and key tech
+- [Features Checklist](#features-checklist) — All implemented features
+- [Overview](#overview) — Application details
+- [Getting Started](#getting-started-quick-reference) — Setup instructions
+- [Repository Status](#repository-status) — Git and GitHub info
+- [File Structure](#file-structure) — Directory layout
+- [Authentication](#authentication) — Analytics token setup
+- [Flask Routes](#flask-routes) — All API endpoints
+- [Frontend UI](#frontend-ui-charthtml) — All 9 tabs explained
+- [Time-Based Analysis](#time-based-analysis-tba--detailed-calculation-guide) — TBA calculations
+- [Common Tasks](#common-tasks--troubleshooting) — How-tos
+- [Known Limitations](#known-limitations--workarounds) — Issues and fixes
+- [Dependencies](#dependencies-requirements_upstoxxt) — Python packages
+
+---
+
+## Quick Summary
+
+**What it does:** Real-time Indian stock market analysis platform specialized in NIFTY options. Displays live candlestick footprint charts, options premiums, volatility analysis, and time-based market snapshots via Upstox WebSocket + REST APIs.
+
+**Key UI tabs:** Chart (futures footprint) • Options Chain • Straddle • OI Tracker • Volatility Skew • Full Option Chain • Rate of Change • Options Footprint (ATM locked) • Time-Based Analysis
+
+**Data sources:** Upstox WebSocket v3 (market ticks), Upstox REST APIs (PCR, Max Pain), SQLite (historical candles/footprints)
+
+**Tech stack:** Python 3, Flask, Socket.IO, Lightweight Charts.js, Chart.js
+
+**Deployment:** Vultr VPS (Ubuntu) + Gunicorn with eventlet async, systemd service, auto login/logout cron
+
+---
+
+## Features Checklist
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Live futures footprint chart (NIFTY/BANKNIFTY) | ✅ Complete | 1/3/5/15 min TF, buy/sell volume overlay |
+| Options chain with 3 trigger signals (T1/T2/T3) | ✅ Complete | ITM premiums, SMA crossover, OI decline detection |
+| Straddle premium tracker | ✅ Complete | Live chart with zoom/pan, spike alerts |
+| OI tracker with change % (5m/10m/15m/30m) | ✅ Complete | Per-strike OI + volume analysis |
+| Volatility Skew (IV via Black-Scholes Newton-Raphson) | ✅ Complete | CE/PE IV curves, >20% amber highlighting |
+| Full Option Chain (CE/PE paired by strike) | ✅ Complete | OI highlighting, ITM/OTM coloring |
+| Rate of Change (RoC %) — rolling & fixed modes | ✅ Complete | 30s/1m/3m windows, per option |
+| Options Footprint Chart (ATM CE/PE locked) | ✅ Complete | Independent filters, socket events, DB storage |
+| NIFTY Option Chain Time-Based Analysis | ✅ Complete | 5-min snapshots, 11 columns, PCR/Max Pain from APIs |
+| India VIX subscription & display | ✅ Complete | Real-time ticker in TBA header |
+| ATM strike locking (options footprint only) | ✅ Complete | Login-time lock, unaffected by spot movement |
+| Top 3 OI highlighting with gradients | ✅ Complete | Option chain CE/PE columns |
+| Green/Red arrows for metric changes | ✅ Complete | PCR, IV, VIX, Max Pain, Fut OI Chg |
+| Footprint alert bell (Web Audio API) | ✅ Complete | Volume threshold, per-level deduplication |
+| Auto login/logout cron | ✅ Complete | 9:13 AM / 3:31 PM IST weekdays |
+| CSV export (TBA snapshots) | ✅ Complete | Downloadable date-stamped file |
+| Database per-symbol routing | ✅ Complete | NIFTY.db, BANKNIFTY.db, OPTIONS_ATM.db |
+| 180-day data retention | ✅ Complete | Auto cleanup on startup |
+| Responsive tab switching | ✅ Complete | Main controls hidden except on Chart tab |
+
 ---
 
 ## Overview
 
 **Application Name:** Afaaqs Foot Print Server  
-**Purpose:** Real-time NIFTY/BANKNIFTY futures footprint chart with options chain, straddle premium tracking, OI tracker, volatility skew chart, and full option chain — powered by Upstox WebSocket market data.  
+**Purpose:** Real-time NIFTY/BANKNIFTY futures footprint chart with options chain, straddle premium tracking, OI tracker, volatility skew chart, full option chain, ATM options footprint chart, and NIFTY Option Chain Time-Based Analysis — powered by Upstox WebSocket market data and Upstox REST APIs.  
 **Server:** Vultr VPS — IP `65.20.75.231`  
 **Port:** `5002` (firewall open)  
 **URL:** `http://65.20.75.231:5002`
@@ -37,25 +92,76 @@ Restart=always
 
 ---
 
-## Repository
+## Getting Started (Quick Reference)
+
+### For Local Development
+```bash
+cd /Users/afaaqimran/advancedfootprint/finalfootprint/finalfootprint
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements_upstox.txt
+python footprint_web_app_upstox.py
+# Open http://localhost:5000 in browser and click Login
+```
+
+### For Production (Vultr VPS)
+```bash
+# SSH to VPS
+ssh root@65.20.75.231
+
+# Manage service
+systemctl start/stop/restart finalfootprint
+systemctl status finalfootprint
+
+# View logs
+journalctl -u finalfootprint -f
+
+# Deploy changes
+cd /opt/finalfootprint
+git pull origin main
+systemctl restart finalfootprint
+```
+
+### Key Files to Edit
+| File | Purpose |
+|------|---------|
+| `footprint_web_app_upstox.py` | All backend routes, APIs, state management |
+| `templates/chart.html` | All UI tabs, JavaScript logic, styling |
+| `requirements_upstox.txt` | Python dependencies |
+
+---
+
+## Repository Status
 
 | Item | Detail |
 |------|--------|
 | Primary repo | `https://github.com/afaaqimran/finalfootprint.git` |
 | Backup repo | `https://github.com/afaaqimran/Footprintandoptiontrigger.git` |
-| Active branch | `feature/options-chain-websocket-stability` |
+| Active branch | `main` |
+| Default branch | `main` (merged from `feature/options-chain-websocket-stability`) |
 | GitHub PAT | Stored in git remote URL (use `git remote -v` to check) |
 | Clone command | `git clone https://<PAT>@github.com/afaaqimran/finalfootprint.git` |
 
-**To push backup:**
+**To push to backup:**
 ```bash
 cd /opt/finalfootprint
 git add -A
 git commit -m "your message"
-git push backup feature/options-chain-websocket-stability
+git push backup main
+```
+
+**Current git status (local dev):**
+```
+M  APP_CONTEXT.md              (documentation updates)
+M  footprint_web_app_upstox.py (backend with all features)
+M  templates/chart.html        (frontend with all tabs)
+?? .vscode/                    (IDE config, not committed)
+?? footprint_data_*.db         (SQLite DBs, not committed)
 ```
 
 ---
+
+
 
 ## File Structure
 
@@ -69,11 +175,12 @@ git push backup feature/options-chain-websocket-stability
 ├── auto_session.sh                 # Cron script for auto login/logout
 ├── requirements_upstox.txt         # Python dependencies
 ├── footprint_data_NIFTY.db         # SQLite DB — NIFTY 1-min candle + footprint data
+├── footprint_data_OPTIONS_ATM.db   # SQLite DB — ATM CE and PE options 1-min candle + footprint data
 ├── footprint_data.db               # SQLite DB — default/fallback DB
 ├── instruments_cache.json          # Cached Upstox instrument master (refreshed every 24h)
 ├── footprint.service               # Original service file (reference only)
 ├── templates/
-│   ├── chart.html                  # Main chart UI (footprint + options chain + straddle + OI tracker + volatility skew + full option chain tabs)
+│   ├── chart.html                  # Main chart UI (footprint + options chain + straddle + OI tracker + volatility skew + full option chain + options footprint chart + time-based analysis tabs)
 │   └── login_upstox.html           # Login page
 ```
 
@@ -128,9 +235,12 @@ UpstoxWebSocketV3 (upstox_websocket_v3.py)
         │
         ▼
 process_websocket_data() in footprint_web_app_upstox.py
-  ├── NSE_INDEX|Nifty 50  → nifty_spot_ltp (for ATM calculation)
+  ├── NSE_INDEX|Nifty 50  → nifty_spot_ltp (for ATM calculation + TBA spot)
+  ├── NSE_INDEX|India VIX → vix_ltp (for TBA VIX column)
   ├── Options keys        → options_cache {ltp, atp, ohlc, volume, oi}
   │                       → oi_history {(timestamp_ms, oi)} rolling 35-min window
+  │                       → if key == atm_fp_ce_key → _process_atm_option_footprint('CE')
+  │                       → if key == atm_fp_pe_key → _process_atm_option_footprint('PE')
   └── Futures token       → OHLC candle + footprint processing
         │
         ├── FootprintProcessor.process_intrabar_footprint()
@@ -140,7 +250,13 @@ process_websocket_data() in footprint_web_app_upstox.py
         │
         ├── DataStorage.store_candle() → SQLite (always as 1-min)
         │
-        └── socketio.emit('ohlc_data') → browser via Socket.IO
+        ├── socketio.emit('ohlc_data') → browser via Socket.IO (futures chart)
+        │
+        └── socketio.emit('options_fp_data') → browser via Socket.IO (options footprint chart)
+
+Upstox REST APIs (called at each TBA snapshot, every 5 min during market hours)
+  ├── GET /v2/market/pcr      → PCR column
+  └── GET /v2/market/max-pain → Max Pain column
 ```
 
 ---
@@ -150,7 +266,8 @@ process_websocket_data() in footprint_web_app_upstox.py
 On login, the app subscribes to:
 1. **Futures instrument** — default NIFTY front-month (e.g. `NSE_FO|37054`), mode `full`
 2. **NIFTY 50 spot index** — `NSE_INDEX|Nifty 50`, mode `ltpc`
-3. **NIFTY options** — 13 strikes (ATM-300 to ATM+300), both CE and PE, mode `full`
+3. **India VIX** — `NSE_INDEX|India VIX`, mode `ltpc` — used by the Time-Based Analysis tab
+4. **NIFTY options** — 13 strikes (ATM-300 to ATM+300), both CE and PE, mode `full`
 
 **ATM Monitor thread** — runs every 10 seconds, re-subscribes options if ATM strike shifts by 50 pts (with 15pt hysteresis buffer). Has a 30-second cooldown between re-subscriptions and waits up to 30s for NIFTY spot on startup to prevent rapid-fire re-subscription loops.
 
@@ -162,9 +279,10 @@ On login, the app subscribes to:
 |---------|----------|
 | `footprint_data_NIFTY.db` | NIFTY 1-min candles + footprint levels |
 | `footprint_data_BANKNIFTY.db` | BANKNIFTY (created on first BANKNIFTY data) |
+| `footprint_data_OPTIONS_ATM.db` | ATM CE (`NIFTY_CE_ATM`) and PE (`NIFTY_PE_ATM`) 1-min option candles + footprint levels. Locked to login-time ATM strike for the entire day. |
 | `footprint_data.db` | Default fallback |
 
-**Tables:**
+**Tables (all databases share the same schema):**
 - `candles` — timestamp, symbol, open, high, low, close, ltp, volume, volume_diff, timeframe
 - `footprint_levels` — candle_timestamp, symbol, price, buy_qty, sell_qty, total_qty, timeframe
 
@@ -192,23 +310,26 @@ On login, the app subscribes to:
 | `/api/volatility-skew` | GET | Implied volatility per strike computed via Black-Scholes (Newton-Raphson solver) |
 | `/api/option-chain-full` | GET | Full option chain paired by strike — CE left, PE right, with OI, OHLC, LTP |
 | `/api/roc` | GET | Rate of change % of option LTP over 30s/1m/3m — rolling or fixed mode (`?mode=rolling\|fixed`) |
+| `/api/options-footprint-data` | GET | Historical ATM CE/PE option candle + footprint data from `footprint_data_OPTIONS_ATM.db` (params: type=CE\|PE, days) |
+| `/api/tba-snapshot` | GET | Single Time-Based Analysis snapshot — Nifty Spot, PCR (Upstox API), Put/Call OI, IV, VIX, Support/Resistance, Max Pain (Upstox API), Futures OI Change %, Bias |
 
 ---
 
 ## Frontend UI (chart.html)
 
-Six tabs at the bottom of the screen:
-
+Nine tabs on the left vertical sidebar:
 ### 📈 Chart Tab
 - Lightweight Charts candlestick chart
 - Footprint canvas overlay (buy/sell volume at each price level)
 - Timeframe selector (1/3/5/15 min)
 - Symbol selector (NIFTY/BANKNIFTY futures)
+- Buy Qty / Sell Qty / Trace / Alert threshold filters — **specific to the futures footprint chart only**
 - Draw lines tool
 - Historical data loaded on login via `/api/stored-data`
 - Live updates via Socket.IO `ohlc_data` event
 - X-axis shows date + time in IST (`dd Mon, HH:MM`)
 - Chart height: `calc(100vh - 36px)` to avoid tab bar overlap
+- **The main controls toolbar (symbol selector, TF buttons, filters) is hidden when the Options Footprint tab is active**
 
 ### ⚡ Options Chain Tab
 - NIFTY ATM/ITM options table
@@ -300,6 +421,60 @@ Six tabs at the bottom of the screen:
 - Auto-refreshes every 3 seconds while tab is active
 - Data sourced from `ltp_history` (per instrument key, rolling 5-min window recorded on every options tick)
 
+### 🕯 Options Footprint Chart Tab
+- Side-by-side candlestick + footprint chart for the **ATM CALL (CE)** and **ATM PUT (PE)** options contracts
+- ATM strike is **locked at login time** — computed from NIFTY spot at the moment of first options subscription, then fixed for the entire trading day. It does not shift when spot moves. All other tabs (options chain, straddle, OI tracker, etc.) continue to use a live dynamic ATM.
+- **Independent toolbar** (separate from the futures chart controls bar, which is hidden on this tab):
+  - Spot price display (live, updates every 5 seconds)
+  - ATM Lock — shows the locked strike and expiry
+  - TF buttons: 1m / 3m / 5m / 15m (client-side resampling of stored 1-min data)
+  - **Footprint toggle** — starts ON by default
+  - **Buy ≥** filter — hides buy boxes below threshold; highlights matching values in purple
+  - **Sell ≥** filter — same for sell boxes
+  - **Trace ≥** filter — hides any box (buy or sell) below this value entirely
+- Each chart half has its own sub-header showing the type (CE/PE), live LTP, and locked strike
+- Canvas footprint overlay: buy volume boxes to the right (teal border), sell volume boxes to the left (red border)
+- Historical data loaded from `footprint_data_OPTIONS_ATM.db` via `/api/options-footprint-data`
+- Live updates via Socket.IO `options_fp_data` event
+- **Footprint volume uses raw contract count (no lot-size flooring)** — options VTT ticks arrive as individual contracts so every volume difference is recorded directly
+- LightweightCharts IST time offset (+19800s) applied, same as the futures chart
+
+### ⏱ NIFTY Option Chain Time-Based Analysis Tab
+- Captures a structured snapshot every **5 minutes** aligned to IST clock boundaries: **09:18, 09:23, 09:28 ... 15:28, 15:33**
+  - First slot is 09:18 — the first `:X3/:X8` boundary after market open (09:15)
+  - Countdown timer in the header shows time until next auto-snapshot
+  - Before 09:15 → shows "Market opens at 09:15 IST"; after 15:30 → shows "Market closed"
+- Manual **📸 Capture Now** button available at any time
+- **🗑 Clear** button wipes all rows; **⬇ CSV** exports the full table as a downloadable CSV file
+- Rows displayed newest-at-top; latest row highlighted in amber; alternating row backgrounds
+
+**Columns and how each is calculated:**
+
+| Column | Source | Calculation |
+|--------|--------|-------------|
+| **Time** | Server IST clock | `HH:MM` at moment of snapshot |
+| **Nifty Spot** | `nifty_spot_ltp` WebSocket | Live NIFTY 50 index LTP; ▲/▼ arrow vs previous row computed client-side |
+| **PCR** | Upstox REST API `GET /v2/market/pcr` | `data.insights[-1].pcr` (latest 5-min bucket). Falls back to `data.pcr` (overall day), then to local `total PE OI ÷ total CE OI` across 13 subscribed strikes if API fails |
+| **Put OI (ATM & -1)** | `options_cache` WebSocket | OI + volume label for ATM PE and ATM-50 PE. Volume label: High (≥1.5× ATM vol), Moderate (≥0.8×), Low |
+| **Call OI (ATM & +1)** | `options_cache` WebSocket | OI + volume label for ATM CE and ATM+50 CE |
+| **IV** | Black-Scholes Newton-Raphson (server) | Average of ATM CE IV and ATM PE IV. Same solver as Volatility Skew tab. `S`=spot, `K`=ATM, `T`=DTE/365, `r`=6.5% |
+| **VIX** | `vix_ltp` WebSocket | Live India VIX from `NSE_INDEX\|India VIX` subscription |
+| **Support / Resistance** | `options_cache` + `oi_history` | Highest PE OI strike = Support, highest CE OI strike = Resistance. Status: **Holding** if OI ≥ OI 2 ticks ago, **Under Pressure** if OI declining |
+| **Max Pain** | Upstox REST API `GET /v2/market/max-pain` | `data.insights[-1].max_pain` (latest 5-min bucket). Falls back to `data.max_pain` (overall day), then to local computation across 13 subscribed strikes |
+| **Fut OI Chg** | SQLite futures DB | `(latest VTT − previous VTT) / previous VTT × 100` from last 2 rows of `candles` table |
+| **Bias** | PCR heuristic | PCR ≥ 1.4 → Strong Bullish; 1.15–1.4 → Bullish; 0.85–1.15 → Neutral; 0.65–0.85 → Bearish; < 0.65 → Strong Bearish. Nudged one step bearish if spot is within 75pts of support strike that is Under Pressure |
+
+**Upstox REST API calls (made at each snapshot):**
+
+| API | Endpoint | Params |
+|-----|----------|--------|
+| PCR | `GET https://api.upstox.com/v2/market/pcr` | `instrument_key=NSE_INDEX\|Nifty 50`, `expiry=YYYY-MM-DD`, `date=today`, `bucket_interval=5` |
+| Max Pain | `GET https://api.upstox.com/v2/market/max-pain` | same params |
+
+Both use the existing `ANALYTICS_TOKEN` for authorisation. Expiry is auto-converted from `'05 Jun 2026'` → `'2026-06-05'`. A `⚠️` log entry is printed if the API returns an unexpected response; a `ℹ️` log entry is printed when the local fallback is used.
+
+**Limitation:** Support/Resistance, IV, and volume labels use only the 13 near-ATM subscribed strikes (ATM ± 300 pts). PCR and Max Pain come from the full Upstox chain via their APIs.
+
 ---
 
 ## Footprint Alert
@@ -363,6 +538,54 @@ Six tabs at the bottom of the screen:
 
 ---
 
+## Time-Based Analysis (TBA) — Detailed Calculation Guide
+
+### Capture Schedule
+- **Market hours:** 09:15 AM – 3:30 PM IST (Monday–Friday)
+- **First snapshot:** 09:18 IST (first `:X3` or `:X8` boundary after market open 09:15)
+- **Recurring snapshots:** Every 5 minutes thereafter (09:23, 09:28, 09:33 ... 15:28, 15:33)
+- **Outside hours:** Header shows "Market opens at 09:15 IST" (before) or "Market closed" (after 3:30 PM)
+- **Manual capture:** 📸 button allows capture anytime, no restriction
+
+### Per-Column Calculation Details
+
+| Column | Data Source | Calculation | Arrows | Color Logic |
+|--------|-------------|-------------|--------|------------|
+| **Time** | Server IST clock | `now.strftime('%H:%M')` | — | Amber on latest row |
+| **Nifty Spot** | WebSocket `NSE_INDEX\|Nifty 50` | Live LTP | ▲/▼ vs prev row | Green up / Red down |
+| **PCR** | REST API → Upstox `/v2/market/pcr?bucket_interval=5` | `insights[-1].pcr` (latest 5-min); fallback `data.pcr` → local calc | ▲ Green / ▼ Red | Teal ≥1.3, Cyan ≥1.0, Amber ≥0.8, Red <0.8 |
+| **Put OI (ATM & -1)** | WebSocket options_cache | Two rows: ATM PE strike + (ATM-50) PE strike, each with OI + volume label | — | Vol label color: Green (High), Amber (Moderate), Grey (Low) |
+| **Call OI (ATM & +1)** | WebSocket options_cache | Two rows: ATM CE strike + (ATM+50) CE strike, each with OI + volume label | — | Vol label color: Green (High), Amber (Moderate), Grey (Low) |
+| **IV** | Black-Scholes Newton-Raphson solver | Average of `(IV_CE_ATM + IV_PE_ATM) / 2` | ▲ Red / ▼ Green (higher IV = more uncertainty) | Amber if >20%, else white |
+| **VIX** | WebSocket `NSE_INDEX\|India VIX` | Live LTP | ▲ Red / ▼ Green (higher VIX = fear/volatility) | Red if >20, Amber if >15, else white |
+| **Support / Resistance** | WebSocket options_cache + oi_history | Support = highest PE OI strike + status. Resistance = highest CE OI strike + status. Status = "Holding" if current OI ≥ OI from 2 ticks ago, else "Under Pressure" | — | Green Support / Red Resistance text |
+| **Max Pain** | REST API → Upstox `/v2/market/max-pain?bucket_interval=5` | `insights[-1].max_pain` (latest 5-min); fallback `data.max_pain` → local brute-force calc | ▲/▼ Grey (directionally neutral) | Amber text |
+| **Fut OI Chg %** | SQLite futures DB `candles` table | `(OI_now - OI_prev) / OI_prev × 100` from last 2 1-min candle rows | ▲ Green / ▼ Red | Green if +, Red if — |
+| **Bias** | PCR heuristic + support OI check | **Base:** Strong Bull (≥1.4), Bull (≥1.15), Neutral (0.85–1.15), Bear (0.65–0.85), Strong Bear (<0.65). **Nudge:** If spot < 75 pts from support & support Under Pressure, downgrade one level (e.g., Bull → Neutral) | — | Color badge: 🟢 Strong Bull, 🔵 Bull, 🟡 Neutral, 🔴 Bear, 🔴 Strong Bear |
+
+### API Fallback Strategy
+
+**PCR fallback chain:**
+1. Call `/v2/market/pcr?instrument_key=NSE_INDEX|Nifty 50&expiry=YYYY-MM-DD&date=today&bucket_interval=5`
+2. Try `response.data.insights[-1].pcr` (latest 5-min bucket)
+3. If missing, fall back to `response.data.pcr` (overall day PCR)
+4. If API fails/timeout, compute locally: `sum(PE OI across 13 subscribed strikes) / sum(CE OI)` 
+5. Log ℹ️ if local fallback used, ⚠️ if API error
+
+**Max Pain fallback chain:**
+1. Call `/v2/market/max-pain?instrument_key=NSE_INDEX|Nifty 50&expiry=YYYY-MM-DD&date=today&bucket_interval=5`
+2. Try `response.data.insights[-1].max_pain` (latest 5-min bucket)
+3. If missing, fall back to `response.data.max_pain` (overall day Max Pain)
+4. If API fails/timeout, brute-force calculate: test each subscribed strike as candidate, for each candidate sum `abs(candidate - strike) × oi_strike`, return candidate with minimum pain
+5. Log ℹ️ if local fallback used, ⚠️ if API error
+
+### CSV Export
+**Filename:** `nifty_tba_YYYY-MM-DD.csv` (date-stamped per IST)
+
+**Columns:** Time | Nifty Spot | PCR | Put ATM OI | Put ATM-1 OI | Call ATM OI | Call ATM+1 OI | IV | VIX | Support/Resistance | Max Pain | Fut OI Chg % | Bias
+
+---
+
 ## Footprint Logic
 
 **Method:** Intrabar  
@@ -370,8 +593,9 @@ Six tabs at the bottom of the screen:
 - `price < open` → Sell volume  
 - `price == open` (doji) → compare with previous close  
 
-**Tick size:** 0.25  
-**Lot size:** Enforced per instrument (NIFTY=75, BANKNIFTY=30). Volume rounded down to nearest lot.  
+**Tick size:** 0.25 (futures), 0.05 (options footprint)  
+**Lot size:** Enforced per instrument (NIFTY=**65**, BANKNIFTY=30). Volume rounded down to nearest lot.  
+**Options footprint:** Uses raw contract count (no lot-size flooring) — options VTT is already in individual contracts.  
 **Volume source:** VTT (Volume Traded Today) delta between ticks
 
 ---
@@ -389,21 +613,109 @@ Six tabs at the bottom of the screen:
 
 | Class | File | Purpose |
 |-------|------|---------|
-| `UpstoxAPI` | `footprint_web_app_upstox.py` | Per-user state: token, WebSocket, footprint processor, options cache, OI history |
+| `UpstoxAPI` | `footprint_web_app_upstox.py` | Per-user state: token, WebSocket, footprint processor, options cache, OI history, ATM footprint state |
 | `FootprintProcessor` | `footprint_web_app_upstox.py` | Classifies volume ticks as buy/sell |
-| `DataStorage` | `footprint_web_app_upstox.py` | SQLite read/write, resampling |
+| `DataStorage` | `footprint_web_app_upstox.py` | SQLite read/write, resampling, DB routing |
 | `InstrumentManager` | `instrument_manager.py` | Instrument master download/cache/lookup |
 | `UpstoxWebSocketV3` | `upstox_websocket_v3.py` | WebSocket client with reconnect |
 
+## ATM Lock — Options Footprint Chart
+
+The following `UpstoxAPI` fields are set **once at login** (first call to `subscribe_options_strikes`) and never changed again during the session:
+
+| Field | Description |
+|-------|-------------|
+| `atm_fp_strike` | Locked ATM strike value (e.g. `24500`) |
+| `atm_fp_ce_key` | Instrument key for the locked ATM CE contract |
+| `atm_fp_pe_key` | Instrument key for the locked ATM PE contract |
+| `atm_fp_expiry` | Expiry date string for display (e.g. `05 Jun 2026`) |
+
+When the ATM monitor re-subscribes options after a spot move, these fields are unchanged — the options footprint chart continues recording ticks for the original ATM CE/PE contracts.
+
+All other features (`options_chain`, `straddle`, `oi_tracker`, `volatility_skew`, `option_chain_full`, `roc`, `tba_snapshot`) derive ATM dynamically from `round(nifty_spot_ltp / 50) * 50` on every API call and are unaffected by the lock.
+
+### Additional UpstoxAPI State Variables
+
+| Variable | Description |
+|----------|-------------|
+| `vix_ltp` | Live India VIX — updated from `NSE_INDEX\|India VIX` WebSocket subscription (ltpc mode). Used by `/api/tba-snapshot`. |
+
+### Socket.IO Events
+
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `ohlc_data` | Server → Client | Futures candle + footprint tick (existing) |
+| `options_fp_data` | Server → Client | ATM CE/PE option candle + footprint tick. Includes `opt_type: 'CE'|'PE'` field to route to the correct chart half |
+
 ---
 
-## Known Issues / Notes
+## Common Tasks & Troubleshooting
 
-- Gunicorn eventlet worker is deprecated as of Gunicorn 25 (will be removed in v26). Migration to gevent is recommended before upgrading Gunicorn.
-- `thread.join()` is incompatible with eventlet — logout uses `stop_event.set()` + `ws.close()` instead of `disconnect()` to avoid crash.
-- Only 1 Gunicorn worker — required for Socket.IO state consistency (multiple workers would not share session state).
-- Analytics token is hardcoded in source — treat as sensitive credential, do not commit to public repos.
-- OI change % columns show `—` during the first N minutes after login (until `oi_history` accumulates enough data for each interval).
+### Add a new tab/feature
+1. Add JavaScript function in `chart.html` (e.g., `loadNewTab()`)
+2. Add Flask route in `footprint_web_app_upstox.py` (e.g., `/api/new-endpoint`)
+3. Add tab button to the sidebar: `<button class="tab-btn" id="tab-new" onclick="switchTab('new')">🔲</button>`
+4. Update `switchTab()` function to handle the new tab visibility/hiding
+5. Test locally, commit, push, redeploy
+
+### Update Upstox API calls
+- PCR: `/v2/market/pcr` with params `instrument_key`, `expiry`, `date`, `bucket_interval=5`
+- Max Pain: `/v2/market/max-pain` with same params
+- Both use `ANALYTICS_TOKEN` for authorization
+- Fallback to local calculation if API fails or times out
+
+### Debug WebSocket issues
+```bash
+# Monitor live ticks on the server
+journalctl -u finalfootprint -f | grep -E "(WebSocket|subscribe|process)"
+
+# Check if instrument keys are correct
+grep "instrument_key" /opt/finalfootprint/footprint_web_app_upstox.py
+```
+
+### Reset database or clear old data
+```bash
+# Manual cleanup
+rm /opt/finalfootprint/footprint_data_*.db
+
+# Cleanup runs automatically on app restart (180-day retention)
+systemctl restart finalfootprint
+```
+
+### Update NIFTY lot size globally
+- Search for `NIFTY_LOT_SIZE = 65` in `footprint_web_app_upstox.py`
+- Also check BANKNIFTY: `BANKNIFTY_LOT_SIZE = 30`
+- Redeploy after changes
+
+### Export historical data
+- TBA snapshots: Use 📊 tab "⬇ CSV" button to export current session
+- Futures candles: Query SQLite directly: `sqlite3 footprint_data_NIFTY.db "SELECT * FROM candles LIMIT 100;"`
+
+---
+
+## Known Limitations & Workarounds
+
+### Limitations
+- **Eventlet worker deprecated:** Gunicorn 25+ removed eventlet. Upgrade to gevent before Gunicorn v26.
+- **Single worker only:** Multiple Gunicorn workers would break Socket.IO state sharing (session not sync'd).
+- **Options data 13 strikes only:** PCR/Max Pain from full Upstox API, but IV/SR calculated from 13 near-ATM subscribed strikes only.
+- **OI change % shows — for first N minutes:** Until `oi_history` accumulates 3+ ticks for each interval.
+- **Browser cache:** Clear cache if seeing stale chart after deployment (`Cmd+Shift+R` on Mac).
+
+### Workarounds & Fixes
+- **WebSocket reconnection slow:** Increase `wait_for_connection()` timeout in `/opt/finalfootprint/upstox_websocket_v3.py` if needed.
+- **ATM options footprint locked forever:** By design — restart app to unlock and recalculate ATM.
+- **API timeout (PCR/Max Pain):** Catch exception in `/api/tba-snapshot`, uses local fallback automatically (check logs for ℹ️ entry).
+- **IV calculation returns None:** Check if option LTP < intrinsic value (algorithm rejects such inputs).
+- **Chart x-axis shows UTC instead of IST:** Ensure client browser timezone is set correctly; server sends IST offset (+19800s).
+
+### Common Error Messages
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `401 Unauthorized` | Session expired or invalid token | Logout & re-login, check token expiry date |
+| `WebSocket timeout` | Network lag or Upstox API slow | Restart WebSocket, check firewall |
+| `Database locked` | Multiple processes accessing DB | Stop app, remove `.db-journal`, restart |
+| `EventEmitter memory leak warning` | Too many listeners on WebSocket close/end | Normal in eventlet mode, no action needed |
 
 ---
 
@@ -440,4 +752,18 @@ protobuf>=4.21.0
 
 ---
 
-*Last updated: 14 May 2026 (session 2)*
+---
+
+## Session History & Changes
+
+| Session | Date | Key Changes |
+|---------|------|-------------|
+| Session 1 | 21 Mar 2026 | Initial app launch — analytics token login, auto session cron, chart reordering |
+| Session 2 | 10 Apr 2026 | Options chain triggers (T1/T2/T3), all-triggers log, volatility skew, full option chain |
+| Session 3 | 3 May 2026 | Rate of Change tab, footprint alert bell, OI spike highlighting |
+| Session 4 | 5 June 2026 | NIFTY Option Chain Time-Based Analysis tab, India VIX subscription, PCR/Max Pain via Upstox APIs, capture schedule 09:18+ every 5 min, Options Footprint chart with ATM lock, top 3 OI gradient highlighting |
+| Session 5 | 8 June 2026 | Documentation review & update, all features verified working |
+
+---
+
+*Last updated: 8 June 2026 (session 5)*
