@@ -214,7 +214,9 @@ class DataStorage:
     
     def get_db_path(self, symbol):
         """Get database path based on symbol"""
-        if symbol in ('NIFTY_CE_ATM', 'NIFTY_PE_ATM'):
+        if 'NIFTY_CE' in symbol or 'NIFTY_PE' in symbol:
+            # For options footprint charts (all 14 strike combinations)
+            # Store all in footprint_data_OPTIONS_ATM.db (renamed to more generic later if needed)
             return 'footprint_data_OPTIONS_ATM.db'
         elif 'BANKNIFTY' in symbol:
             return 'footprint_data_BANKNIFTY.db'
@@ -574,6 +576,8 @@ class UpstoxAPI:
         """
         Resolve ATM/ITM NIFTY option strikes and subscribe them on the existing WebSocket.
         Uses full mode so we get LTP, ATP, OHLC in every tick.
+        Subscribes to 14 strikes: ATM±300, ATM±200, ATM±100, ATM (all CE and PE).
+        100-point increments only (no 50-point strikes).
         Called once after login and again whenever the futures instrument changes.
         """
         try:
@@ -589,7 +593,7 @@ class UpstoxAPI:
                 instrument_manager.load_cached_instruments()
 
             today = datetime.now().date()
-            strike_step = 50
+            strike_step = 100  # Changed from 50 to 100 per user requirement
 
             # Determine ATM from NIFTY spot LTP, fallback to futures LTP, then median strike
             atm_ltp = nifty_ltp or self.nifty_spot_ltp or self.prev_ltp
@@ -627,8 +631,9 @@ class UpstoxAPI:
                 strikes = sorted(set(float(o.get('strike_price', 0)) for o in expiry_options if o.get('strike_price')))
                 atm_strike = strikes[len(strikes) // 2] if strikes else 24000
 
-            # 7 strikes above and below ATM — subscribe both CE and PE for each
-            all_strikes = [atm_strike + i * strike_step for i in range(-6, 7)]  # ATM-300 to ATM+300
+            # 7 strikes above and below ATM (ATM±300, ±200, ±100, ATM) — subscribe both CE and PE for each
+            # With 100-point increments: ATM-300, ATM-200, ATM-100, ATM, ATM+100, ATM+200, ATM+300
+            all_strikes = [atm_strike + i * strike_step for i in range(-3, 4)]  # 7 strikes total
 
             opt_lookup = {}
             for opt in expiry_options:
@@ -637,20 +642,40 @@ class UpstoxAPI:
 
             new_meta = []
             new_keys = set()
+            
+            # Initialize tracking for all 14 strike/type combinations (7 strikes × 2 types)
+            self.ofp_strike_candles = {}  # {symbol: candle_obj}
+            self.ofp_strike_volumes = {}  # {symbol: prev_vtt}
+            self.ofp_strike_close = {}    # {symbol: prev_close}
+            self.ofp_strike_category = {} # {symbol: prev_category}
+            self.ofp_strike_fp_proc = {}  # {symbol: FootprintProcessor}
 
             for strike in all_strikes:
                 for opt_type in ('CE', 'PE'):
                     ikey = opt_lookup.get((float(strike), opt_type))
                     if strike < atm_strike:
                         label = f'ATM-{int(atm_strike - strike)}'
+                        offset = -int(atm_strike - strike)
                     elif strike > atm_strike:
                         label = f'ATM+{int(strike - atm_strike)}'
+                        offset = int(strike - atm_strike)
                     else:
                         label = 'ATM'
+                        offset = 0
+                    
                     new_meta.append({'strike': strike, 'type': opt_type, 'label': label,
-                                      'instrument_key': ikey, 'expiry': nearest_expiry.strftime('%d %b %Y')})
+                                      'instrument_key': ikey, 'expiry': nearest_expiry.strftime('%d %b %Y'),
+                                      'offset': offset})
                     if ikey:
                         new_keys.add(ikey)
+                        
+                        # Initialize tracking for this strike/type
+                        symbol = f'NIFTY_{opt_type}_{offset}'
+                        self.ofp_strike_candles[symbol] = None
+                        self.ofp_strike_volumes[symbol] = 0
+                        self.ofp_strike_close[symbol] = 0
+                        self.ofp_strike_category[symbol] = 'buy'
+                        self.ofp_strike_fp_proc[symbol] = FootprintProcessor()
 
             # Unsubscribe old option keys if they changed
             if self.options_instrument_keys and self.options_instrument_keys != new_keys:
@@ -664,7 +689,7 @@ class UpstoxAPI:
 
             if new_keys and self.ws_client:
                 self.ws_client.subscribe(new_keys, mode="full")
-                print(f"📡 Subscribed {len(new_keys)} NIFTY option strikes (ATM={atm_strike}, expiry={nearest_expiry})")
+                print(f"📡 Subscribed {len(new_keys)} NIFTY option strikes (ATM={atm_strike}, expiry={nearest_expiry}, 100-pt increments)")
 
                 # Lock the ATM for the options footprint chart on FIRST subscription only.
                 # Once set, atm_fp_strike never changes for the rest of the day — the footprint
@@ -816,6 +841,7 @@ class UpstoxAPI:
             base_update = {
                 'symbol':    symbol,
                 'opt_type':  opt_type,
+                'offset':    0,  # ATM footprint always uses offset 0
                 'timestamp': int(current_candle['ts']),
                 'open':      current_candle['open'],
                 'high':      current_candle['high'],
@@ -852,6 +878,99 @@ class UpstoxAPI:
 
         except Exception as e:
             print(f"❌ ATM options footprint error ({opt_type}): {e}")
+
+    def _process_all_strike_footprints(self, instrument_key, opt_type, offset, ltp, vtt, current_ts):
+        """
+        Process footprint for all 7 strikes (ATM±300, ±200, ±100, ATM) for both CE and PE.
+        Stores data in separate tables per strike.
+        Used to track all 14 strike/type combinations irrespective of user UI selection.
+        """
+        try:
+            timeframe_ms = 60000  # always 1-min
+            candle_ts = int(current_ts // timeframe_ms) * timeframe_ms
+            symbol = f'NIFTY_{opt_type}_{offset}'  # e.g., NIFTY_CE_-300, NIFTY_PE_0, NIFTY_CE_100
+
+            # Get or initialize candle state for this strike/type
+            if symbol not in self.ofp_strike_candles:
+                self.ofp_strike_candles[symbol] = None
+                self.ofp_strike_volumes[symbol] = 0
+                self.ofp_strike_close[symbol] = 0
+                self.ofp_strike_category[symbol] = 'buy'
+                self.ofp_strike_fp_proc[symbol] = FootprintProcessor()
+
+            current_candle = self.ofp_strike_candles[symbol]
+            prev_volume    = self.ofp_strike_volumes[symbol]
+            prev_close     = self.ofp_strike_close[symbol]
+            prev_category  = self.ofp_strike_category[symbol]
+            fp_proc        = self.ofp_strike_fp_proc[symbol]
+
+            # Candle bucketing
+            if current_candle and abs(current_candle['ts'] - candle_ts) < 1000:
+                current_candle['high']  = max(current_candle['high'], ltp)
+                current_candle['low']   = min(current_candle['low'], ltp)
+                current_candle['close'] = ltp
+            else:
+                current_candle = {
+                    'open': ltp, 'high': ltp, 'low': ltp, 'close': ltp,
+                    'vol': 0, 'ts': candle_ts
+                }
+
+            # Volume diff
+            if prev_volume == 0:
+                prev_volume = vtt
+                volume_diff = 0
+            else:
+                volume_diff = max(0, vtt - prev_volume)
+                prev_volume = vtt
+
+            # Footprint — use raw volume diff for options
+            footprint_levels = []
+            if volume_diff > 0:
+                footprint_levels, new_category = fp_proc.process_intrabar_footprint(
+                    price=ltp,
+                    volume_diff=volume_diff,
+                    open_price=current_candle['open'],
+                    prev_close=prev_close,
+                    prev_category=prev_category
+                )
+                prev_category = new_category
+
+            base_update = {
+                'symbol':    symbol,
+                'opt_type':  opt_type,
+                'offset':    offset,  # Track offset for filtering
+                'timestamp': int(current_candle['ts']),
+                'open':      current_candle['open'],
+                'high':      current_candle['high'],
+                'low':       current_candle['low'],
+                'close':     current_candle['close'],
+                'ltp':       ltp,
+                'volume':    vtt,
+                'volume_diff': volume_diff,
+                'historical': False
+            }
+
+            if footprint_levels:
+                for level in footprint_levels:
+                    update = base_update.copy()
+                    update['footprint_level'] = level
+                    # Emit for real-time chart updates (not just store to DB)
+                    socketio.emit('options_fp_data', update, room=self.user_id)
+                    data_storage.store_candle(update, '1')
+            else:
+                # Emit even when no footprint levels (for candle updates)
+                socketio.emit('options_fp_data', base_update, room=self.user_id)
+                data_storage.store_candle(base_update, '1')
+
+            # Write back updated state
+            prev_close = current_candle['close']
+            self.ofp_strike_candles[symbol] = current_candle
+            self.ofp_strike_volumes[symbol] = prev_volume
+            self.ofp_strike_close[symbol] = prev_close
+            self.ofp_strike_category[symbol] = prev_category
+
+        except Exception as e:
+            print(f"❌ All-strike footprint error ({symbol}): {e}")
 
     def process_websocket_data(self, data):
         try:
@@ -915,18 +1034,32 @@ class UpstoxAPI:
                             cutoff_ltp = current_ts - 5 * 60 * 1000
                             self.ltp_history[instrument_key] = [(t, v) for t, v in lhist if t >= cutoff_ltp]
 
-                        # ── ATM Options Footprint Processing ─────────────────────
-                        # Use the locked ATM strike/keys (set at login, fixed for the day).
-                        # This ensures the footprint chart always tracks the same CE/PE
-                        # contract regardless of where the spot moves later in the day.
-                        if self.atm_fp_ce_key and instrument_key == self.atm_fp_ce_key and ltp_val > 0:
+                        # ── Options Footprint Processing for All Strikes ─────────────────────
+                        # Process all 14 strike/type combinations (7 strikes × 2 types)
+                        # This stores data for all offsets irrespective of UI selection
+                        for meta in self.options_meta:
+                            if meta.get('instrument_key') == instrument_key and ltp_val > 0:
+                                offset = meta.get('offset', 0)
+                                self._process_all_strike_footprints(
+                                    instrument_key=instrument_key,
+                                    opt_type=meta['type'],
+                                    offset=offset,
+                                    ltp=ltp_val,
+                                    vtt=int(full.get('vtt', 0) or 0),
+                                    current_ts=current_ts
+                                )
+                                break
+                        
+                        # ── ATM Options Footprint Real-Time Emit ──────────────────────────────
+                        # Emit real-time footprint updates for locked ATM CE and PE
+                        if instrument_key == self.atm_fp_ce_key and ltp_val > 0:
                             self._process_atm_option_footprint(
                                 opt_type='CE',
                                 ltp=ltp_val,
                                 vtt=int(full.get('vtt', 0) or 0),
                                 current_ts=current_ts
                             )
-                        elif self.atm_fp_pe_key and instrument_key == self.atm_fp_pe_key and ltp_val > 0:
+                        elif instrument_key == self.atm_fp_pe_key and ltp_val > 0:
                             self._process_atm_option_footprint(
                                 opt_type='PE',
                                 ltp=ltp_val,
@@ -1631,23 +1764,34 @@ def get_option_chain_full():
 
 @app.route('/api/options-footprint-data')
 def get_options_footprint_data():
-    """Return stored ATM CE/PE footprint candle data from footprint_data_OPTIONS_ATM.db"""
+    """
+    Return stored CE/PE footprint candle data from footprint_data_OPTIONS_ATM.db
+    Supports fetching for any strike offset: ATM, ATM±100, ATM±200, ATM±300
+    If no offset specified, defaults to current day data only
+    """
     if 'user_id' not in session or session['user_id'] not in authenticated_users:
         return jsonify({'success': False}), 401
 
     user_id = session['user_id']
     upstox = authenticated_users[user_id]
     opt_type = request.args.get('type', 'CE').upper()   # 'CE' or 'PE'
-    days = int(request.args.get('days', 6))
-    symbol = f'NIFTY_{opt_type}_ATM'
-
+    offset = request.args.get('offset', '0')             # '0', '-100', '+100', '-200', '+200', '-300', '+300'
+    days = int(request.args.get('days', 1))              # Default to current day only
+    
     try:
+        # Build symbol based on offset
+        # Symbol format: NIFTY_CE_0, NIFTY_CE_-100, NIFTY_CE_100, etc.
+        symbol = f'NIFTY_{opt_type}_{offset}'
+        
+        # Fetch data from database
         raw_data = data_storage.get_stored_data(symbol, timeframe='1', days=days)
+        
         return jsonify({
             'success':      True,
             'data':         raw_data,
             'count':        len(raw_data),
             'opt_type':     opt_type,
+            'offset':       offset,
             'locked_strike': upstox.atm_fp_strike,
             'locked_expiry': upstox.atm_fp_expiry,
         })

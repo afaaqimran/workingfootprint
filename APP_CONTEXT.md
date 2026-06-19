@@ -44,8 +44,8 @@ This document provides a complete reference for any AI system or developer worki
 | Volatility Skew (IV via Black-Scholes Newton-Raphson) | ✅ Complete | CE/PE IV curves, >20% amber highlighting |
 | Full Option Chain (CE/PE paired by strike) | ✅ Complete | OI highlighting, ITM/OTM coloring |
 | Rate of Change (RoC %) — rolling & fixed modes | ✅ Complete | 30s/1m/3m windows, per option |
-| Options Footprint Chart (ATM CE/PE locked) | ✅ Complete | Independent filters, socket events, DB storage |
-| NIFTY Option Chain Time-Based Analysis | ✅ Complete | 5-min snapshots, 11 columns, PCR/Max Pain from APIs |
+| Options Footprint Chart (ATM CE/PE locked) | ✅ Complete | Multi-strike selection, 7 offsets (ATM ±300/±200/±100), real-time updates for all offsets, dropdown with actual strike prices, current day data only |
+| NIFTY Option Chain Time-Based Analysis | ✅ Complete | 5-min snapshots, 11 columns, PCR/Max Pain from APIs, auto-capture at 09:18 on login |
 | India VIX subscription & display | ✅ Complete | Real-time ticker in TBA header |
 | ATM strike locking (options footprint only) | ✅ Complete | Login-time lock, unaffected by spot movement |
 | Top 3 OI highlighting with gradients | ✅ Complete | Option chain CE/PE columns |
@@ -324,6 +324,9 @@ Nine tabs on the left vertical sidebar:
 - Timeframe selector (1/3/5/15 min)
 - Symbol selector (NIFTY/BANKNIFTY futures)
 - Buy Qty / Sell Qty / Trace / Alert threshold filters — **specific to the futures footprint chart only**
+  - Default Buy Qty: 20000
+  - Default Sell Qty: 20000
+  - **Default Trace: 10000** (filters out footprint boxes with volume below this threshold)
 - Draw lines tool
 - Historical data loaded on login via `/api/stored-data`
 - Live updates via Socket.IO `ohlc_data` event
@@ -422,29 +425,54 @@ Nine tabs on the left vertical sidebar:
 - Data sourced from `ltp_history` (per instrument key, rolling 5-min window recorded on every options tick)
 
 ### 🕯 Options Footprint Chart Tab
-- Side-by-side candlestick + footprint chart for the **ATM CALL (CE)** and **ATM PUT (PE)** options contracts
-- ATM strike is **locked at login time** — computed from NIFTY spot at the moment of first options subscription, then fixed for the entire trading day. It does not shift when spot moves. All other tabs (options chain, straddle, OI tracker, etc.) continue to use a live dynamic ATM.
-- **Independent toolbar** (separate from the futures chart controls bar, which is hidden on this tab):
+- **Multi-Strike Selection:** Users can now view and switch between 7 different strike offsets in addition to the locked ATM
+  - Dropdown selector shows actual strike prices (e.g., 24200, 24300, 24400 instead of generic labels)
+  - 7 available offsets: ATM-300, ATM-200, ATM-100, ATM, ATM+100, ATM+200, ATM+300
+  - ATM strike is **locked at login time** — computed from NIFTY spot at the moment of first options subscription, then fixed for the entire trading day
+  - Selection persists when switching between offsets
+  
+- **Real-Time Updates for All Offsets:**
+  - All 14 strike/type combinations (7 offsets × CE/PE) subscribe to WebSocket and receive real-time ticks
+  - Charts update instantly as new candles form for the selected offset
+  - Data for all 14 combinations stored in database (`footprint_data_OPTIONS_ATM.db`)
+  - When offset changed, charts load current-day data and display with real-time updates
+  
+- **Side-by-side Candlestick + Footprint Charts:**
+  - Left half: **CALL (CE)** contract for selected offset
+  - Right half: **PUT (PE)** contract for selected offset
+  - Each chart shows locked ATM reference and selected offset actual strike
+  
+- **Independent Toolbar** (separate from futures chart controls):
+  - **Strike Dropdown:** Select from 7 offset options with actual strike prices
   - Spot price display (live, updates every 5 seconds)
-  - ATM Lock — shows the locked strike and expiry
-  - TF buttons: 1m / 3m / 5m / 15m (client-side resampling of stored 1-min data)
+  - Current strike info (locked ATM and selected offset)
+  - TF buttons: 1m / 3m / 5m / 15m (client-side resampling of 1-min stored data)
   - **Footprint toggle** — starts ON by default
-  - **Buy ≥** filter — hides buy boxes below threshold; highlights matching values in purple
-  - **Sell ≥** filter — same for sell boxes
-  - **Trace ≥** filter — hides any box (buy or sell) below this value entirely
-- Each chart half has its own sub-header showing the type (CE/PE), live LTP, and locked strike
-- Canvas footprint overlay: buy volume boxes to the right (teal border), sell volume boxes to the left (red border)
-- Historical data loaded from `footprint_data_OPTIONS_ATM.db` via `/api/options-footprint-data`
-- Live updates via Socket.IO `options_fp_data` event
-- **Footprint volume uses raw contract count (no lot-size flooring)** — options VTT ticks arrive as individual contracts so every volume difference is recorded directly
-- LightweightCharts IST time offset (+19800s) applied, same as the futures chart
+  - **Buy ≥** filter — hides buy boxes below threshold
+  - **Sell ≥** filter — hides sell boxes below threshold
+  - **Trace ≥** filter — hides all boxes (buy or sell) below threshold
+  
+- **Data Sources:**
+  - Historical data loaded from `footprint_data_OPTIONS_ATM.db` per offset via `/api/options-footprint-data?offset={value}`
+  - Current day only (no historical date range)
+  - Live updates via Socket.IO `options_fp_data` event with offset field
+  - All 14 combinations processed automatically regardless of UI selection
+  
+- **Canvas Footprint Overlay:**
+  - Buy volume boxes: right side, teal border
+  - Sell volume boxes: left side, red border
+  - Footprint volume uses raw contract count (no lot-size flooring)
+  
+- **Time Display:**
+  - LightweightCharts IST time offset (+19800s) applied for accurate market timestamps
 
 ### ⏱ NIFTY Option Chain Time-Based Analysis Tab
+- **Auto-capture on login:** TBA snapshot capture automatically starts at 09:18 IST (or first `:X3/:X8` boundary after market open) immediately after user login, without requiring manual action
 - Captures a structured snapshot every **5 minutes** aligned to IST clock boundaries: **09:18, 09:23, 09:28 ... 15:28, 15:33**
   - First slot is 09:18 — the first `:X3/:X8` boundary after market open (09:15)
   - Countdown timer in the header shows time until next auto-snapshot
   - Before 09:15 → shows "Market opens at 09:15 IST"; after 15:30 → shows "Market closed"
-- Manual **📸 Capture Now** button available at any time
+- Manual **📸 Capture Now** button available at any time to force an immediate snapshot
 - **🗑 Clear** button wipes all rows; **⬇ CSV** exports the full table as a downloadable CSV file
 - Rows displayed newest-at-top; latest row highlighted in amber; alternating row backgrounds
 
@@ -763,7 +791,104 @@ protobuf>=4.21.0
 | Session 3 | 3 May 2026 | Rate of Change tab, footprint alert bell, OI spike highlighting |
 | Session 4 | 5 June 2026 | NIFTY Option Chain Time-Based Analysis tab, India VIX subscription, PCR/Max Pain via Upstox APIs, capture schedule 09:18+ every 5 min, Options Footprint chart with ATM lock, top 3 OI gradient highlighting |
 | Session 5 | 8 June 2026 | Documentation review & update, all features verified working |
+| Session 6 | 17 June 2026 | Trace filter default updated to 10000, TBA auto-capture on login, Options Footprint multi-strike real-time updates with dropdown selection, comprehensive fixes for chart display and offset filtering |
 
 ---
 
-*Last updated: 8 June 2026 (session 5)*
+### Session 6 Updates (17 June 2026) — Major Options Footprint Enhancements
+
+**Overview:**
+Fixed critical issues with Options Footprint chart real-time updates and multi-strike selection. The chart now displays live data for all 7 strike offsets (ATM ±300, ±200, ±100, ATM) with smooth dropdown switching and real-time WebSocket updates.
+
+**Changes Made:**
+
+#### 1. Trace Filter Default Value Updated
+- **File:** `templates/chart.html` (line 305)
+- **Change:** Default trace value changed from `100000` to `10000`
+- **Reason:** Lower sensitivity for detecting lower-volume trades in main futures footprint chart
+- **Scope:** Affects NIFTY/BANKNIFTY futures footprint chart only (Chart tab)
+
+#### 2. TBA Auto-Capture on Login
+- **File:** `templates/chart.html` (line 953)
+- **Change:** Added `tbaInitPanel()` call to socket connect event handler
+- **Behavior:** 
+  - Upon successful login, the TBA capture scheduler activates automatically
+  - First snapshot triggers at 09:18 IST (or next `:X3/:X8` boundary after market open)
+  - Subsequent snapshots every 5 minutes (09:23, 09:28, 09:33, etc.)
+  - Users no longer need to manually click "📸 Capture Now" to begin data collection
+- **Data Collection:** Happens transparently in the background; TBA panel not required to be open
+- **Manual Option:** Users can still click "📸 Capture Now" at any time to force an immediate snapshot
+
+#### 3. Options Footprint Real-Time Updates - Critical Fixes ✅
+
+**Issue 1: Missing Offset Field in Socket Events**
+- **File:** `footprint_web_app_upstox.py` (line 844)
+- **Fix:** Added `'offset': 0` to base_update in `_process_atm_option_footprint()`
+- **Impact:** Frontend can now filter Socket.IO events by offset correctly
+
+**Issue 2: ATM Footprint Processing Never Called**
+- **File:** `footprint_web_app_upstox.py` (lines 1052-1063)
+- **Fix:** Added checks for ATM CE/PE instrument keys in `process_websocket_data()`
+- **Impact:** Real-time Socket.IO events now emitted for locked ATM CE/PE contracts
+
+**Issue 3: Non-ATM Offsets (±100, ±200, ±300) Not Emitted in Real-Time**
+- **File:** `footprint_web_app_upstox.py` (lines 952-964)
+- **Fix:** Added `socketio.emit()` calls to `_process_all_strike_footprints()`
+- **Impact:** All 14 strike combinations (7 offsets × 2 types) now emit real-time events for chart updates
+
+**Issue 4: Dropdown Value Always Reset to ATM**
+- **File:** `templates/chart.html` (lines 2484, 2793-2797)
+- **Fix:** Added `ofpDropdownInitialized` flag to prevent `populateStrikeDropdown()` from being called multiple times
+- **Root Cause:** Function was called every time `loadOfpHistory()` ran, resetting dropdown to '0'
+- **Impact:** Dropdown selection now persists when user switches between offsets
+
+**Issue 5: Charts Not Displaying Data After Offset Switch**
+- **File:** `templates/chart.html` (lines 2808-2835)
+- **Fix:** 
+  - Added enhanced console logging for debugging
+  - Added `fitContent()` call to auto-fit chart after data load
+  - Improved data validation and error messages
+- **Impact:** Charts now display correctly with proper data for each offset
+
+#### 4. Options Footprint Chart Features Now Working
+
+**Multi-Strike Selection:**
+- ✅ Dropdown shows actual strike prices (e.g., 24200, 24300, 24400 instead of "ATM±100")
+- ✅ User can select any of 7 strike offsets (ATM ±300, ±200, ±100, ATM)
+- ✅ Selection persists and doesn't reset to ATM
+- ✅ Charts display correct data immediately upon selection
+
+**Real-Time Updates:**
+- ✅ All 14 strike combinations receive real-time WebSocket ticks
+- ✅ Charts update instantly as new ticks arrive
+- ✅ Footprint boxes (buy/sell volume) drawn correctly
+- ✅ Both CE and PE series update simultaneously
+
+**Data Persistence:**
+- ✅ All 14 strike combinations stored in database (`NIFTY_CE_-300` to `NIFTY_CE_300`, same for PE)
+- ✅ Current day data loaded from DB when offset selected
+- ✅ Historical candles available for all offsets
+
+**Verified via Console Logs:**
+```
+✅ Setting CE chart data with 13 candles
+  First candle: {time: 1781790180, open: 132.05, high: 132.05, low: 132, close: 132.05, …}
+  Last candle: {time: 1781791560, open: 120.7, high: 120.95, low: 120.5, close: 120.5, …}
+✅ Setting PE chart data with 13 candles
+  First candle: {time: 1781790180, open: 106.4, high: 106.55, low: 106.4, close: 106.4, …}
+  Last candle: {time: 1781791560, open: 115.8, high: 116.4, low: 115.5, close: 116.15, …}
+```
+
+#### 5. Documentation Created
+
+| File | Purpose |
+|------|---------|
+| `OPTIONS_FP_REALTIME_FIX_DETAILED.md` | Comprehensive analysis of ATM emission fix |
+| `DROPDOWN_OFFSET_FIX.md` | Multi-strike offset real-time emission fix |
+| `DROPDOWN_VALUE_RESET_FIX.md` | Dropdown persistence fix documentation |
+| `OPTIONS_FP_COMPLETE_FIX_SUMMARY.md` | Complete fix summary and verification |
+| `VERIFICATION_REPORT.md` | 100pt vs 50pt rounding verification |
+
+---
+
+*Last updated: 17 June 2026 (session 6)*

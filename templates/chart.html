@@ -302,7 +302,7 @@
         <input type="number" id="sellQtyFilter" class="filter-input" placeholder="20000" min="0" value="20000">
 
         <span class="filter-label">Trace</span>
-        <input type="number" id="traceFilter" class="filter-input" placeholder="100000" min="0" value="100000">
+        <input type="number" id="traceFilter" class="filter-input" placeholder="10000" min="0" value="10000">
 
         <span class="filter-label">Alert</span>
         <input type="number" id="alertThreshold" class="filter-input" placeholder="0" min="0" value="0">
@@ -645,7 +645,13 @@
 
             <div style="width:1px;height:20px;background:#3a3a5c;margin:0 2px;flex-shrink:0;"></div>
 
-            <!-- Timeframe -->
+            <!-- Strike Offset Dropdown — NEW -->
+            <span style="color:#8b949e;font-size:11px;">Strike:</span>
+            <select id="ofp-strike-select" style="padding:3px 6px;font-size:11px;background:#2B2B43;color:#e6edf3;border:1px solid #444;border-radius:3px;cursor:pointer;" onchange="switchOfpStrike()">
+                <!-- Options populated dynamically with actual strike prices -->
+            </select>
+
+            <div style="width:1px;height:20px;background:#3a3a5c;margin:0 2px;flex-shrink:0;"></div>
             <span style="color:#8b949e;font-size:11px;">TF:</span>
             <button class="btn active" data-ofp-tf="1" style="padding:3px 8px;font-size:11px;min-height:28px;">1m</button>
             <button class="btn" data-ofp-tf="3" style="padding:3px 8px;font-size:11px;min-height:28px;">3m</button>
@@ -943,6 +949,9 @@
                 document.getElementById('connection-status').textContent = 'Live';
                 isPlaying = true;
                 updatePlayButton();
+                
+                // Auto-initialize TBA snapshot capture at 09:18 IST
+                tbaInitPanel();
             });
 
             socket.on('disconnect', (reason) => {
@@ -2472,6 +2481,9 @@
     let ofpFpEnabled = false;                  // footprint OFF by default
     let ofpTimeframe = '1';                   // always 1-min from backend; resample client-side
     let ofpInitialized = false;
+    let ofpDropdownInitialized = false;       // Flag to prevent repopulating dropdown
+    let ofpCurrentOffset = '0';               // Current selected strike offset (0, -100, -200, -300, 100, 200, 300)
+    let ofpAtmStrike = null;                  // Locked ATM strike value (used to calculate dropdown options)
     let ofpAtmMeta = { ce_strike: null, pe_strike: null };
 
     function toggleOptFP() {
@@ -2758,18 +2770,31 @@
         const statusId = side === 'CE' ? 'ofp-ce-status' : 'ofp-pe-status';
         try {
             document.getElementById(statusId).textContent = 'Loading...';
-            const resp = await fetch(`/api/options-footprint-data?type=${side}&days=6`);
+            // Fetch data for the current selected offset, loading only current day data (days=1)
+            const apiUrl = `/api/options-footprint-data?type=${side}&offset=${ofpCurrentOffset}&days=1`;
+            console.log(`📡 Fetching ${side} data: ${apiUrl}`);
+            const resp = await fetch(apiUrl);
             const result = await resp.json();
+            console.log(`📥 ${side} response:`, result);
+            
             if (!result.success || !result.data) {
                 document.getElementById(statusId).textContent = result.message || 'No data yet';
+                console.warn(`⚠️ No data for ${side}, offset=${ofpCurrentOffset}`);
                 return;
             }
 
             // Show locked ATM strike and expiry in the header (only needs to run once)
             if (result.locked_strike) {
+                ofpAtmStrike = parseInt(result.locked_strike);
                 document.getElementById('ofp-atm').textContent = result.locked_strike;
                 const strikeEl = document.getElementById(side === 'CE' ? 'ofp-ce-strike' : 'ofp-pe-strike');
                 if (strikeEl) strikeEl.textContent = result.locked_strike;
+                
+                // Populate dropdown with actual strike prices (only do this once, ever)
+                if (!ofpDropdownInitialized) {
+                    ofpDropdownInitialized = true;
+                    populateStrikeDropdown();
+                }
             }
             if (result.locked_expiry) {
                 document.getElementById('ofp-expiry').textContent = result.locked_expiry;
@@ -2778,18 +2803,35 @@
             // Resample if needed
             const resampled = ofpResample(result.data, parseInt(ofpTimeframe));
             const liveArr   = ofpBuildLive(resampled.length > 0 ? resampled : result.data);
+            
+            console.log(`📊 Loaded ${liveArr.length} candles for ${side}, offset=${ofpCurrentOffset}`);
+            if (liveArr.length > 0) {
+                console.log(`  First candle:`, liveArr[0]);
+                console.log(`  Last candle:`, liveArr[liveArr.length - 1]);
+            }
 
             if (side === 'CE') {
                 ofpCeData = liveArr;
+                console.log(`  ofpCeSeries exists? ${!!ofpCeSeries}, liveArr.length=${liveArr.length}`);
                 if (ofpCeSeries && liveArr.length > 0) {
+                    console.log(`✅ Setting CE chart data with ${liveArr.length} candles`);
                     ofpCeSeries.setData(liveArr.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
+                    ofpCeChart.timeScale().fitContent();
                     drawOfpFootprint('CE');
+                } else {
+                    console.warn(`❌ Cannot set CE data: series=${!!ofpCeSeries}, length=${liveArr.length}`);
                 }
+
             } else {
                 ofpPeData = liveArr;
+                console.log(`  ofpPeSeries exists? ${!!ofpPeSeries}, liveArr.length=${liveArr.length}`);
                 if (ofpPeSeries && liveArr.length > 0) {
+                    console.log(`✅ Setting PE chart data with ${liveArr.length} candles`);
                     ofpPeSeries.setData(liveArr.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
+                    ofpPeChart.timeScale().fitContent();
                     drawOfpFootprint('PE');
+                } else {
+                    console.warn(`❌ Cannot set PE data: series=${!!ofpPeSeries}, length=${liveArr.length}`);
                 }
             }
 
@@ -2797,8 +2839,69 @@
                 liveArr.length > 0 ? `${liveArr.length} candles loaded` : 'Waiting for first tick...';
         } catch (e) {
             document.getElementById(statusId).textContent = 'Error loading data';
-            console.error('Options FP history error:', e);
+            console.error('❌ Options FP history error:', e);
         }
+    }
+
+    function switchOfpStrike() {
+        const selectEl = document.getElementById('ofp-strike-select');
+        if (!selectEl) {
+            console.error('❌ ofp-strike-select element not found');
+            return;
+        }
+        
+        const newOffset = selectEl.value;
+        console.log(`📊 Dropdown changed: newOffset=${newOffset}, ofpCurrentOffset=${ofpCurrentOffset}`);
+        
+        if (newOffset === ofpCurrentOffset) {
+            console.log('ℹ️ Same offset selected, no change');
+            return;  // No change
+        }
+        
+        ofpCurrentOffset = newOffset;
+        console.log(`✅ ofpCurrentOffset updated to: ${ofpCurrentOffset}`);
+        
+        // Reload charts for the new offset
+        console.log(`🔄 Loading history for offset ${ofpCurrentOffset}`);
+        loadOfpHistory('CE');
+        loadOfpHistory('PE');
+    }
+
+    function populateStrikeDropdown() {
+        const selectEl = document.getElementById('ofp-strike-select');
+        if (!selectEl || !ofpAtmStrike) {
+            console.warn(`⚠️ Cannot populate dropdown: selectEl=${!!selectEl}, ofpAtmStrike=${ofpAtmStrike}`);
+            return;
+        }
+        
+        console.log(`📋 Populating dropdown with ATM=${ofpAtmStrike}`);
+        
+        // Clear existing options
+        selectEl.innerHTML = '';
+        
+        // Define offsets and their corresponding strike prices
+        const offsets = [
+            { offset: '-300', label: ofpAtmStrike - 300 },
+            { offset: '-200', label: ofpAtmStrike - 200 },
+            { offset: '-100', label: ofpAtmStrike - 100 },
+            { offset: '0',    label: ofpAtmStrike },
+            { offset: '100',  label: ofpAtmStrike + 100 },
+            { offset: '200',  label: ofpAtmStrike + 200 },
+            { offset: '300',  label: ofpAtmStrike + 300 }
+        ];
+        
+        // Create options with actual strike prices
+        offsets.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.offset;
+            option.textContent = item.label;
+            selectEl.appendChild(option);
+            console.log(`  Added option: offset=${item.offset}, label=${item.label}`);
+        });
+        
+        // Set default to ATM (offset 0)
+        selectEl.value = '0';
+        console.log(`✅ Dropdown populated, default value set to '0'`);
     }
 
     // Update live CE/PE ATM footprint from Socket.IO event 'options_fp_data'
@@ -2807,6 +2910,10 @@
         const side = data.opt_type; // 'CE' or 'PE'
 
         if (!ofpInitialized) return; // chart not ready yet
+
+        // Only process ticks for the currently selected offset
+        const dataOffset = data.offset != null ? data.offset.toString() : '0';
+        if (dataOffset !== ofpCurrentOffset) return;  // Skip if not for current offset
 
         // Update header LTP
         const ltpEl    = document.getElementById(side === 'CE' ? 'ofp-ce-ltp'    : 'ofp-pe-ltp');
