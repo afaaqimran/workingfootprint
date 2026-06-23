@@ -767,6 +767,8 @@ class UpstoxAPI:
         last_subscribe_time = 0        # throttle: prevent re-subscribing more than once per 30s
         HYSTERESIS = 15  # spot must move 15 pts past strike boundary before switching ATM
         SUBSCRIBE_COOLDOWN = 30  # seconds between re-subscriptions
+        MARKET_OPEN_HOUR = 9
+        MARKET_OPEN_MIN = 15  # Market opens at 09:15 IST
 
         # Wait up to 30s for NIFTY spot to arrive before starting the monitor loop
         for _ in range(30):
@@ -784,6 +786,14 @@ class UpstoxAPI:
                     continue
                 current_atm = round(spot / 50) * 50
                 now = time.time()
+                
+                # Skip option subscription during pre-open (before 09:15)
+                # Pre-open trades can give incorrect ATM calculation; wait for actual market open
+                current_time = datetime.now().time()
+                if current_time.hour == MARKET_OPEN_HOUR and current_time.minute < MARKET_OPEN_MIN:
+                    if last_atm is None:
+                        print(f"⏰ Pre-open detected ({current_time.strftime('%H:%M')}), waiting for market open at 09:15...")
+                    continue
 
                 # Detect expiry rollover: if today is past the subscribed expiry, re-subscribe
                 if self.options_meta:
@@ -806,6 +816,7 @@ class UpstoxAPI:
                 if last_atm is None:
                     if now - last_subscribe_time >= SUBSCRIBE_COOLDOWN:
                         last_atm = current_atm
+                        print(f"✅ Market open detected, subscribing to options strikes with ATM={current_atm}")
                         self.subscribe_options_strikes(nifty_ltp=spot)
                         last_subscribe_time = now
                     continue
