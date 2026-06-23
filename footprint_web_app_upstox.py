@@ -769,14 +769,15 @@ class UpstoxAPI:
             print(f"❌ Error subscribing options strikes: {e}")
 
     def _atm_monitor(self):
-        """Re-subscribe options whenever ATM strike shifts by 50 pts or expiry rolls over"""
+        """Re-subscribe options whenever ATM strike shifts by 100 pts or expiry rolls over"""
         last_atm = None
         last_subscribed_expiry = None  # track the expiry date we last subscribed
         last_subscribe_time = 0        # throttle: prevent re-subscribing more than once per 30s
-        HYSTERESIS = 15  # spot must move 15 pts past strike boundary before switching ATM
+        HYSTERESIS = 50  # spot must move 50 pts past strike boundary before switching ATM (conservative)
         SUBSCRIBE_COOLDOWN = 30  # seconds between re-subscriptions
         MARKET_OPEN_HOUR = 9
         MARKET_OPEN_MIN = 15  # Market opens at 09:15 IST
+        STRIKE_STEP = 100  # Options Footprint uses 100-point strikes
 
         # Wait up to 30s for NIFTY spot to arrive before starting the monitor loop
         for _ in range(30):
@@ -792,7 +793,8 @@ class UpstoxAPI:
                 spot = self.nifty_spot_ltp
                 if spot <= 0:
                     continue
-                current_atm = round(spot / 50) * 50
+                # Calculate ATM using 100-point increments (matches Options Footprint strike_step)
+                current_atm = round(spot / STRIKE_STEP) * STRIKE_STEP
                 now = time.time()
                 
                 # Skip option subscription during pre-open (before 09:15)
@@ -830,16 +832,17 @@ class UpstoxAPI:
                     continue
 
                 # Only shift ATM if spot has moved beyond hysteresis buffer
+                # HYSTERESIS prevents oscillation when spot hovers near 100-point boundaries
                 if current_atm != last_atm:
                     if now - last_subscribe_time < SUBSCRIBE_COOLDOWN:
                         continue  # throttle — too soon since last subscription
-                    if current_atm > last_atm and spot >= last_atm + 25 + HYSTERESIS:
-                        print(f"🔄 ATM shifted {last_atm} → {current_atm}, re-subscribing options...")
+                    if current_atm > last_atm and spot >= last_atm + (STRIKE_STEP / 2) + HYSTERESIS:
+                        print(f"🔄 ATM shifted {last_atm} → {current_atm} (spot={spot}), re-subscribing options...")
                         self.subscribe_options_strikes(nifty_ltp=spot)
                         last_atm = current_atm
                         last_subscribe_time = now
-                    elif current_atm < last_atm and spot <= last_atm - 25 - HYSTERESIS:
-                        print(f"🔄 ATM shifted {last_atm} → {current_atm}, re-subscribing options...")
+                    elif current_atm < last_atm and spot <= last_atm - (STRIKE_STEP / 2) - HYSTERESIS:
+                        print(f"🔄 ATM shifted {last_atm} → {current_atm} (spot={spot}), re-subscribing options...")
                         self.subscribe_options_strikes(nifty_ltp=spot)
                         last_atm = current_atm
                         last_subscribe_time = now
