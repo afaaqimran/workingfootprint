@@ -373,16 +373,20 @@ class DataStorage:
             conn = sqlite3.connect(target_db)
             cursor = conn.cursor()
             
-            # Calculate cutoff date, skipping weekends
+            # Calculate cutoff timestamp based on trading data (not created_at)
+            # Convert timestamp from milliseconds to seconds for comparison
             cutoff_date = datetime.now()
             trading_days = 0
             while trading_days < days:
                 cutoff_date -= timedelta(days=1)
                 if cutoff_date.weekday() < 5:  # Monday=0, Friday=4
                     trading_days += 1
-            cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Convert cutoff date to Unix timestamp in MILLISECONDS (since timestamp is stored in ms)
+            cutoff_timestamp_ms = int(cutoff_date.timestamp() * 1000)
             
             # Single JOIN query to get all data at once
+            # Filter by timestamp (trading data) instead of created_at (record creation time)
             cursor.execute('''
                 SELECT 
                     c.timestamp, c.symbol, c.open, c.high, c.low, c.close, c.ltp, c.volume, c.volume_diff,
@@ -390,9 +394,9 @@ class DataStorage:
                 FROM candles c
                 LEFT JOIN footprint_levels f ON c.timestamp = f.candle_timestamp 
                     AND c.symbol = f.symbol AND c.timeframe = f.timeframe
-                WHERE c.symbol = ? AND c.timeframe = ? AND c.created_at >= ?
+                WHERE c.symbol = ? AND c.timeframe = ? AND c.timestamp >= ?
                 ORDER BY c.timestamp ASC, f.id ASC
-            ''', (symbol, timeframe, cutoff_str))
+            ''', (symbol, timeframe, cutoff_timestamp_ms))
             
             rows = cursor.fetchall()
             conn.close()
@@ -429,6 +433,46 @@ class DataStorage:
         except Exception as e:
             print(f"Error retrieving stored data: {e}")
             return []
+    
+    def clear_old_session_data(self, symbol, timeframe='1'):
+        """Clear candle data from previous trading sessions (older than today)
+        This ensures Options Footprint chart starts fresh each day
+        """
+        try:
+            target_db = self.get_db_path(symbol)
+            if not os.path.exists(target_db):
+                return False
+            
+            conn = sqlite3.connect(target_db)
+            cursor = conn.cursor()
+            
+            # Calculate cutoff for today (00:00 in local time)
+            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            cutoff_timestamp_ms = int(today_start.timestamp() * 1000)
+            
+            # Delete candles from BEFORE today
+            cursor.execute('''
+                DELETE FROM footprint_levels 
+                WHERE symbol = ? AND timeframe = ? AND candle_timestamp < ?
+            ''', (symbol, timeframe, cutoff_timestamp_ms))
+            
+            cursor.execute('''
+                DELETE FROM candles 
+                WHERE symbol = ? AND timeframe = ? AND timestamp < ?
+            ''', (symbol, timeframe, cutoff_timestamp_ms))
+            
+            conn.commit()
+            deleted_count = cursor.rowcount
+            conn.close()
+            
+            if deleted_count > 0:
+                print(f"🧹 Cleared {deleted_count} old candles from {symbol}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error clearing old data for {symbol}: {e}")
+            return False
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this'
@@ -1782,6 +1826,10 @@ def get_options_footprint_data():
         # Build symbol based on offset
         # Symbol format: NIFTY_CE_0, NIFTY_CE_-100, NIFTY_CE_100, etc.
         symbol = f'NIFTY_{opt_type}_{offset}'
+        
+        # If requesting current day only (days=1), clear old data from previous sessions
+        if days == 1:
+            data_storage.clear_old_session_data(symbol, timeframe='1')
         
         # Fetch data from database
         raw_data = data_storage.get_stored_data(symbol, timeframe='1', days=days)
