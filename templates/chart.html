@@ -689,7 +689,6 @@
             <div style="flex:1;position:relative;border-right:1px solid #2B2B43;display:flex;flex-direction:column;min-width:0;">
                 <div style="padding:4px 8px;background:#0d1117;border-bottom:1px solid #2B2B43;display:flex;align-items:center;gap:8px;flex-shrink:0;">
                     <span style="font-size:11px;font-weight:700;color:#26a69a;">📈 ATM CALL (CE)</span>
-                    <span style="font-size:11px;color:#8b949e;">LTP: <strong id="ofp-ce-ltp" style="color:#26a69a;">—</strong></span>
                     <span style="font-size:11px;color:#8b949e;">Strike: <strong id="ofp-ce-strike" style="color:#e6edf3;">—</strong></span>
                     <span id="ofp-ce-status" style="font-size:10px;color:#555;margin-left:auto;"></span>
                 </div>
@@ -701,7 +700,6 @@
             <div style="flex:1;position:relative;display:flex;flex-direction:column;min-width:0;">
                 <div style="padding:4px 8px;background:#0d1117;border-bottom:1px solid #2B2B43;display:flex;align-items:center;gap:8px;flex-shrink:0;">
                     <span style="font-size:11px;font-weight:700;color:#ef5350;">📉 ATM PUT (PE)</span>
-                    <span style="font-size:11px;color:#8b949e;">LTP: <strong id="ofp-pe-ltp" style="color:#ef5350;">—</strong></span>
                     <span style="font-size:11px;color:#8b949e;">Strike: <strong id="ofp-pe-strike" style="color:#e6edf3;">—</strong></span>
                     <span id="ofp-pe-status" style="font-size:10px;color:#555;margin-left:auto;"></span>
                 </div>
@@ -2861,6 +2859,14 @@
         ofpCurrentOffset = newOffset;
         console.log(`✅ ofpCurrentOffset updated to: ${ofpCurrentOffset}`);
         
+        // Update strike display based on new offset
+        const newStrikePrice = ofpAtmStrike + parseInt(newOffset);
+        const ceStrikeEl = document.getElementById('ofp-ce-strike');
+        const peStrikeEl = document.getElementById('ofp-pe-strike');
+        if (ceStrikeEl) ceStrikeEl.textContent = newStrikePrice;
+        if (peStrikeEl) peStrikeEl.textContent = newStrikePrice;
+        console.log(`✅ Strike display updated to: ${newStrikePrice}`);
+        
         // Reload charts for the new offset
         console.log(`🔄 Loading history for offset ${ofpCurrentOffset}`);
         loadOfpHistory('CE');
@@ -2915,10 +2921,8 @@
         const dataOffset = data.offset != null ? data.offset.toString() : '0';
         if (dataOffset !== ofpCurrentOffset) return;  // Skip if not for current offset
 
-        // Update header LTP
-        const ltpEl    = document.getElementById(side === 'CE' ? 'ofp-ce-ltp'    : 'ofp-pe-ltp');
+        // Update status
         const statusEl = document.getElementById(side === 'CE' ? 'ofp-ce-status' : 'ofp-pe-status');
-        if (ltpEl && data.ltp > 0) ltpEl.textContent = '₹' + data.ltp.toFixed(2);
         if (statusEl) statusEl.textContent = 'Live';
 
         const chart  = side === 'CE' ? ofpCeChart   : ofpPeChart;
@@ -2977,18 +2981,6 @@
 
             // Update live spot price only — ATM strike is locked at login and shown via loadOfpHistory
             document.getElementById('ofp-spot').textContent = result.nifty_ltp ? result.nifty_ltp.toFixed(2) : '—';
-
-            // Update live LTP for the locked ATM CE and PE from the options chain data
-            // The strike labels may shift (e.g. locked ATM is now ITM) but we track by strike value
-            const lockedStrike = parseFloat(document.getElementById('ofp-atm').textContent);
-            if (!isNaN(lockedStrike)) {
-                const lockedCe = result.data.find(r => r.strike === lockedStrike && r.type === 'CE');
-                const lockedPe = result.data.find(r => r.strike === lockedStrike && r.type === 'PE');
-                if (lockedCe && lockedCe.ltp > 0)
-                    document.getElementById('ofp-ce-ltp').textContent = '₹' + lockedCe.ltp.toFixed(2);
-                if (lockedPe && lockedPe.ltp > 0)
-                    document.getElementById('ofp-pe-ltp').textContent = '₹' + lockedPe.ltp.toFixed(2);
-            }
         } catch (e) {}
     }
 
@@ -3001,14 +2993,6 @@
                 clearInterval(hookOfpSocket);
                 socket.on('options_fp_data', (data) => {
                     ofpHandleLiveTick(data);
-                    // Also update header LTP from live ticks
-                    if (data.opt_type === 'CE') {
-                        const el = document.getElementById('ofp-ce-ltp');
-                        if (el && data.ltp > 0) el.textContent = '₹' + data.ltp.toFixed(2);
-                    } else {
-                        const el = document.getElementById('ofp-pe-ltp');
-                        if (el && data.ltp > 0) el.textContent = '₹' + data.ltp.toFixed(2);
-                    }
                 });
                 // Refresh ATM info every 5 seconds
                 setInterval(ofpUpdateAtmInfo, 5000);
