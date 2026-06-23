@@ -12,6 +12,7 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 import sqlite3
 from instrument_manager import InstrumentManager
 from upstox_websocket_v3 import UpstoxWebSocketV3
+from log_manager import initialize_logging, get_logger
 
 # Footprint Processing Logic
 class FootprintProcessor:
@@ -478,6 +479,12 @@ app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this'
 socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, ping_interval=25, async_mode='eventlet')
 
+# Initialize logging system with 5-day retention
+logger = initialize_logging(log_dir='logs', retention_days=5)
+logger.info("=" * 80)
+logger.info("🚀 Footprint Application Started")
+logger.info("=" * 80)
+
 # Analytics token (1-year validity, read-only, no OAuth redirect needed)
 ANALYTICS_TOKEN = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiJBVjYwMDEiLCJqdGkiOiI2OWJlNzhiZTg3YTgwYjEzMWJkZTg0MWMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlzRXh0ZW5kZWQiOnRydWUsImlhdCI6MTc3NDA5MDQzMCwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxODA1NjY2NDAwfQ.edEAi8hh4gU63ceOAK_Kqfww786nI0zO8LP-7kLm9pQ"
 
@@ -488,8 +495,9 @@ data_storage = DataStorage()  # Initialize persistent storage
 instrument_manager = InstrumentManager()  # Initialize instrument manager
 
 # Refresh instrument data on startup (if cache is older than 24 hours)
-print("🔄 Checking instrument data...")
+logger.info("🔄 Checking instrument data...")
 instrument_manager.refresh_if_needed(max_age_hours=24)
+logger.info("✅ Instrument data check complete")
 
 class UpstoxAPI:
     def __init__(self):
@@ -2367,10 +2375,23 @@ def get_roc():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+@app.route('/api/logs-stats')
+def get_logs_stats():
+    """Get logging statistics and list of log files"""
+    try:
+        from log_manager import get_log_manager
+        log_mgr = get_log_manager()
+        stats = log_mgr.get_log_stats()
+        return jsonify({'success': True, 'data': stats})
+    except Exception as e:
+        logger.error(f"Error getting log stats: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/logout')
 def logout():
     if 'user_id' in session:
         user_id = session['user_id']
+        logger.info(f"🚪 User {user_id} logging out")
         if user_id in authenticated_users:
             upstox = authenticated_users[user_id]
             try:
@@ -2385,7 +2406,18 @@ def logout():
         if user_id in live_data:
             del live_data[user_id]
         session.pop('user_id', None)
+        logger.info(f"✅ User {user_id} logged out successfully")
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    socketio.run(app, debug=False, host='0.0.0.0', port=5001)
+    logger.info("🌐 Starting Flask-SocketIO server")
+    logger.info("📍 Server running on http://0.0.0.0:5001")
+    try:
+        socketio.run(app, debug=False, host='0.0.0.0', port=5001)
+    except KeyboardInterrupt:
+        logger.warning("⚠️ Server interrupted by user")
+    except Exception as e:
+        logger.critical(f"❌ Server error: {e}")
+    finally:
+        logger.info("🛑 Server shutdown")
+        logger.info("=" * 80)
