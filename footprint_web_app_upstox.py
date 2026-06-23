@@ -1202,6 +1202,13 @@ class UpstoxAPI:
                 current_time_ms = int(time.time() * 1000)
                 if candle_timestamp > current_time_ms + (60 * 60 * 1000):
                     candle_timestamp = current_time_ms
+                
+                # Skip pre-open period (before 09:15) for futures candles
+                # Pre-open trades should not be included in the main chart
+                candle_dt = datetime.fromtimestamp(candle_timestamp / 1000)
+                if candle_dt.hour == 9 and candle_dt.minute < 15:
+                    # Pre-open period — skip storing and emitting this candle
+                    return
 
                 base_update = {
                     'symbol': self.current_symbol,
