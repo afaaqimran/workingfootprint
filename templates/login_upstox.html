@@ -4,140 +4,188 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Afaaqs Foot Print Server</title>
+    
+    <!-- Design System CSS -->
+    <link rel="stylesheet" href="/static/css/design-system.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-
         body {
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            background: #1a1a2e;
+            background: linear-gradient(135deg, var(--color-bg-primary) 0%, var(--color-bg-secondary) 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
+            font-family: var(--font-inter);
         }
 
         .wrapper {
             display: flex;
-            width: 820px;
+            width: 100%;
+            max-width: 820px;
             min-height: 520px;
-            border-radius: 16px;
+            border-radius: var(--radius-xl);
             overflow: hidden;
-            box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            background: var(--color-bg-secondary);
+            border: 1px solid var(--color-border);
         }
 
         /* Left panel */
         .left {
             width: 42%;
-            background: #1e2a3a;
+            background: linear-gradient(180deg, rgba(38, 166, 154, 0.1) 0%, rgba(38, 166, 154, 0.05) 100%);
             padding: 3rem 2.5rem;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
+            border-right: 1px solid var(--color-border);
         }
 
         .left h1 {
-            font-size: 1.8rem;
-            font-weight: 700;
-            color: #ffffff;
-            margin-bottom: 2.5rem;
+            font-size: var(--font-size-h1);
+            font-weight: var(--font-weight-bold);
+            color: var(--color-text-primary);
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.5px;
         }
 
-        .field-label {
-            font-size: 0.7rem;
-            font-weight: 700;
-            letter-spacing: 1.2px;
-            text-transform: uppercase;
-            color: #8fa3b1;
-            margin-bottom: 6px;
-        }
-
-        .field-input {
-            width: 100%;
-            background: transparent;
-            border: none;
-            border-bottom: 1px solid #3d5166;
-            color: #e0e8f0;
-            font-size: 0.9rem;
-            padding: 6px 0 8px;
-            margin-bottom: 1.8rem;
-            outline: none;
-            transition: border-color 0.2s;
-            font-family: inherit;
-        }
-
-        .field-input:focus { border-bottom-color: #26a69a; }
-        .field-input::placeholder { color: #3d5166; }
-
-        .login-btn {
-            background: #ffffff;
-            color: #1e2a3a;
-            border: none;
-            border-radius: 25px;
-            padding: 0.6rem 2rem;
-            font-size: 0.88rem;
-            font-weight: 700;
-            cursor: pointer;
-            transition: background 0.2s, transform 0.1s;
-            letter-spacing: 0.3px;
-            margin-bottom: 1rem;
-        }
-
-        .login-btn:hover { background: #e0f2f1; transform: translateY(-1px); }
-        .login-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-
-        .warning-text {
-            font-size: 0.72rem;
-            color: #d29922;
-            margin-top: 0.5rem;
-            line-height: 1.5;
-        }
-
-        .status-msg {
-            margin-top: 0.75rem;
-            font-size: 0.78rem;
-            display: none;
-        }
-        .status-msg.error   { color: #f85149; }
-        .status-msg.success { color: #26a69a; }
-
-        .bottom-note {
-            font-size: 0.72rem;
-            color: #4a6070;
-            padding-top: 2rem;
+        .left p {
+            font-size: var(--font-size-body);
+            color: var(--color-text-secondary);
+            line-height: var(--line-height-relaxed);
         }
 
         /* Right panel */
         .right {
             width: 58%;
-            background: #f0f4f8;
+            padding: 3rem 2.5rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .field-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .field-label {
+            display: block;
+            font-size: var(--font-size-small);
+            font-weight: var(--font-weight-medium);
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            color: var(--color-text-secondary);
+            margin-bottom: var(--spacing-sm);
+        }
+
+        .field-input {
+            width: 100%;
+            background: var(--color-bg-primary);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-md);
+            color: var(--color-text-primary);
+            font-size: var(--font-size-body);
+            padding: 10px var(--spacing-md);
+            outline: none;
+            transition: all var(--transition-normal);
+            font-family: var(--font-inter);
+        }
+
+        .field-input:focus { 
+            border-color: var(--color-focus);
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.1);
+        }
+        
+        .field-input::placeholder { 
+            color: var(--color-text-tertiary);
+        }
+
+        .login-btn {
+            width: 100%;
+            background: var(--color-accent);
+            color: white;
+            border: none;
+            border-radius: var(--radius-md);
+            padding: 11px var(--spacing-lg);
+            font-size: var(--font-size-body);
+            font-weight: var(--font-weight-bold);
+            cursor: pointer;
+            transition: all var(--transition-normal);
+            letter-spacing: 0.5px;
+            margin-top: var(--spacing-lg);
+        }
+
+        .login-btn:hover { 
+            background: #20897d;
+            transform: translateY(-1px);
+        }
+        
+        .login-btn:disabled { 
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .warning-text {
+            font-size: var(--font-size-small);
+            color: var(--color-warning);
+            margin-top: var(--spacing-sm);
+            line-height: var(--line-height-relaxed);
+        }
+
+        .status-msg {
+            margin-top: var(--spacing-sm);
+            font-size: var(--font-size-small);
+            display: none;
+        }
+        .status-msg.error   { color: var(--color-danger); }
+        .status-msg.success { color: var(--color-success); }
+
+        .bottom-note {
+            font-size: var(--font-size-small);
+            color: var(--color-text-tertiary);
+            padding-top: var(--spacing-xl);
+        }
+
+        /* Right panel */
+        .right {
+            width: 58%;
+            background: linear-gradient(135deg, rgba(38, 166, 154, 0.05) 0%, rgba(38, 166, 154, 0.02) 100%);
+            border-left: 1px solid var(--color-border);
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 2rem;
+            padding: var(--spacing-xl);
             position: relative;
             overflow: hidden;
         }
 
-        .right svg { width: 100%; max-width: 340px; opacity: 0.85; }
+        .right svg { 
+            width: 100%; 
+            max-width: 340px; 
+            opacity: 0.85;
+        }
 
         .right-title {
-            font-size: 1rem;
-            font-weight: 700;
-            color: #1e2a3a;
-            margin-top: 1.5rem;
+            font-size: var(--font-size-h3);
+            font-weight: var(--font-weight-bold);
+            color: var(--color-text-primary);
+            margin-top: var(--spacing-xl);
+            letter-spacing: -0.5px;
         }
 
         .right-sub {
-            font-size: 0.78rem;
-            color: #7a8fa0;
-            margin-top: 4px;
+            font-size: var(--font-size-body);
+            color: var(--color-text-secondary);
+            margin-top: var(--spacing-md);
         }
 
         .dot {
             position: absolute;
             border-radius: 50%;
-            background: #c8d8e8;
+            background: rgba(38, 166, 154, 0.2);
         }
 
         @media (max-width: 640px) {
