@@ -20,14 +20,3 @@
 2026-06-24 10:51:28 - INFO     - footprint_app - ✅ User analytics_user logged out successfully
 2026-06-24 10:51:31 - INFO     - footprint_app - 🛑 Server shutdown
 2026-06-24 10:51:31 - INFO     - footprint_app - ================================================================================
-2026-06-24 11:05:47 - INFO     - footprint_app - ================================================================================
-2026-06-24 11:05:47 - INFO     - footprint_app - 🚀 Footprint Application Started
-2026-06-24 11:05:47 - INFO     - footprint_app - ================================================================================
-2026-06-24 11:05:47 - INFO     - footprint_app - 🔄 Checking instrument data...
-2026-06-24 11:05:48 - INFO     - footprint_app - ✅ Instrument data check complete
-2026-06-24 11:05:48 - INFO     - footprint_app - 🌐 Starting Flask-SocketIO server
-2026-06-24 11:05:48 - INFO     - footprint_app - 📍 Server running on http://0.0.0.0:5001
-2026-06-24 11:06:15 - INFO     - footprint_app - 🚪 User analytics_user logging out
-2026-06-24 11:06:15 - INFO     - footprint_app - ✅ User analytics_user logged out successfully
-2026-06-24 11:06:17 - INFO     - footprint_app - 🛑 Server shutdown
-2026-06-24 11:06:17 - INFO     - footprint_app - ================================================================================
