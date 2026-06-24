@@ -365,7 +365,7 @@ class DataStorage:
             print(f"Error storing candle: {e}")
     
     def get_stored_data(self, symbol, timeframe='1', days=180):
-        """Retrieve stored data for last N days"""
+        """Retrieve stored data for last N days. Always returns 1-minute candles."""
         try:
             target_db = self.get_db_path(symbol)
             if not os.path.exists(target_db):
@@ -386,8 +386,8 @@ class DataStorage:
             # Convert cutoff date to Unix timestamp in MILLISECONDS (since timestamp is stored in ms)
             cutoff_timestamp_ms = int(cutoff_date.timestamp() * 1000)
             
-            # Single JOIN query to get all data at once
-            # Filter by timestamp (trading data) instead of created_at (record creation time)
+            # Always fetch 1-minute data (timeframe='1') regardless of parameter
+            # This ensures we can resample to any timeframe on demand
             cursor.execute('''
                 SELECT 
                     c.timestamp, c.symbol, c.open, c.high, c.low, c.close, c.ltp, c.volume, c.volume_diff,
@@ -395,9 +395,9 @@ class DataStorage:
                 FROM candles c
                 LEFT JOIN footprint_levels f ON c.timestamp = f.candle_timestamp 
                     AND c.symbol = f.symbol AND c.timeframe = f.timeframe
-                WHERE c.symbol = ? AND c.timeframe = ? AND c.timestamp >= ?
+                WHERE c.symbol = ? AND c.timeframe = '1' AND c.timestamp >= ?
                 ORDER BY c.timestamp ASC, f.id ASC
-            ''', (symbol, timeframe, cutoff_timestamp_ms))
+            ''', (symbol, cutoff_timestamp_ms))
             
             rows = cursor.fetchall()
             conn.close()
@@ -1327,7 +1327,7 @@ def get_live_data():
 
 @app.route('/api/stored-data')
 def get_stored_data():
-    """Retrieve stored data from database for last 180 days"""
+    """Retrieve stored data from database for last N days, resampled to requested timeframe"""
     if 'user_id' not in session or session['user_id'] not in authenticated_users:
         return jsonify({'success': False}), 401
 
@@ -1337,20 +1337,21 @@ def get_stored_data():
     days = int(request.args.get('days', 180))
     
     try:
-        # 1. Always fetch 1-minute data from DB
-        # The DB *only* stores 1-minute data now.
+        # 1. Always fetch 1-minute data from DB regardless of requested timeframe
+        # This ensures we can resample from 1min to any other timeframe
         raw_data = data_storage.get_stored_data(symbol, timeframe='1', days=days)
-        print(f"🔍 Raw data count: {len(raw_data)}")
+        print(f"🔍 Raw 1-minute data count: {len(raw_data)}")
         if raw_data:
             print(f"🔍 First raw item timestamp: {raw_data[0].get('timestamp')}")
             print(f"🔍 Last raw item timestamp: {raw_data[-1].get('timestamp')}")
         
-        # 2. Resample if needed
+        # 2. Resample to requested timeframe if needed
         if timeframe != '1':
             stored_data = resample_data(raw_data, timeframe)
-            print(f"🔍 Resampled data count: {len(stored_data)}")
+            print(f"🔍 Resampled to {timeframe}min: {len(stored_data)} candles")
         else:
             stored_data = raw_data
+            print(f"🔍 No resampling needed, using {len(stored_data)} 1-minute candles")
             
         return jsonify({
             'success': True,
@@ -1358,6 +1359,7 @@ def get_stored_data():
             'count': len(stored_data)
         })
     except Exception as e:
+        print(f"❌ Error in get_stored_data: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @socketio.on('connect')
