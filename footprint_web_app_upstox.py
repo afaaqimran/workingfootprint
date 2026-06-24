@@ -1134,7 +1134,15 @@ class UpstoxAPI:
                             )
                     continue  # don't process options as futures candles
 
+                # ── Futures Chart Processing ──────────────────────────────────────────
+                # Only process if this is the subscribed futures contract
                 if instrument_key != self.instrument_token:
+                    # Log token mismatch for diagnostics (throttled to avoid spam)
+                    if not hasattr(self, '_last_token_mismatch_log') or \
+                       (time.time() - self._last_token_mismatch_log) > 60:  # Log once per minute
+                        print(f"⚠️ Instrument token mismatch: received={instrument_key}, "
+                              f"expected={self.instrument_token} ({self.current_symbol})")
+                        self._last_token_mismatch_log = time.time()
                     continue
                     
                 full_feed = feed_data.get('fullFeed', {}).get('marketFF', {})
@@ -1446,6 +1454,29 @@ def change_timeframe():
         return jsonify({'success': True, 'message': f'Switched to {timeframe}min timeframe'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/api/diagnostics')
+def get_diagnostics():
+    """Return current instrument and WebSocket state for debugging"""
+    if 'user_id' not in session or session['user_id'] not in authenticated_users:
+        return jsonify({'success': False}), 401
+    
+    user_id = session['user_id']
+    upstox = authenticated_users[user_id]
+    
+    try:
+        return jsonify({
+            'success': True,
+            'current_symbol': upstox.current_symbol,
+            'instrument_token': upstox.instrument_token,
+            'current_timeframe': upstox.current_timeframe,
+            'ws_connected': upstox.ws_client is not None and upstox.ws_client.connection_established if hasattr(upstox.ws_client, 'connection_established') else False,
+            'atm_fp_ce_key': upstox.atm_fp_ce_key,
+            'atm_fp_pe_key': upstox.atm_fp_pe_key,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/options-chain')
 def get_options_chain():

@@ -968,45 +968,44 @@
             });
 
             socket.on('ohlc_data', (data) => {
-                // Always process historical data, only check isPlaying for live data
-                if (data.historical || isPlaying) {
-                    updateWithOHLC(data);
+                // Always process both historical and live data unconditionally
+                // isPlaying gate removed: chart should always show live updates when data arrives
+                updateWithOHLC(data);
 
-                    // Process footprint data
-                    if (data.footprint_level) {
-                        const level = data.footprint_level;
-                        footprintData.set(level.price, level);
+                // Process footprint data
+                if (data.footprint_level) {
+                    const level = data.footprint_level;
+                    footprintData.set(level.price, level);
 
-                        // Check alert threshold
-                        const alertThreshold = parseInt(document.getElementById('alertThreshold').value) || 0;
-                        if (alertEnabled && alertThreshold > 0 && !data.historical) {
-                            if (level.buy_qty >= alertThreshold || level.sell_qty >= alertThreshold) {
-                                const candleTs = data.timestamp || null;
-                                // Reset fired levels when a new candle starts
-                                if (candleTs !== alertLastCandleTs) {
-                                    alertLastCandleTs = candleTs;
-                                    alertFiredLevels.clear();
-                                }
-                                // Fire once per price level per candle
-                                const levelKey = `${level.price}_${level.buy_qty >= alertThreshold ? 'b' : 's'}`;
-                                if (!alertFiredLevels.has(levelKey)) {
-                                    alertFiredLevels.add(levelKey);
-                                    stopAlert();
-                                    playAlert();
-                                }
+                    // Check alert threshold
+                    const alertThreshold = parseInt(document.getElementById('alertThreshold').value) || 0;
+                    if (alertEnabled && alertThreshold > 0 && !data.historical) {
+                        if (level.buy_qty >= alertThreshold || level.sell_qty >= alertThreshold) {
+                            const candleTs = data.timestamp || null;
+                            // Reset fired levels when a new candle starts
+                            if (candleTs !== alertLastCandleTs) {
+                                alertLastCandleTs = candleTs;
+                                alertFiredLevels.clear();
                             }
-                        }
-
-                        // Redraw footprint if enabled
-                        if (footprintEnabled) {
-                            drawFootprint();
+                            // Fire once per price level per candle
+                            const levelKey = `${level.price}_${level.buy_qty >= alertThreshold ? 'b' : 's'}`;
+                            if (!alertFiredLevels.has(levelKey)) {
+                                alertFiredLevels.add(levelKey);
+                                stopAlert();
+                                playAlert();
+                            }
                         }
                     }
 
-                    const price = data.ltp || data.close || 0;
-                    const status = data.historical ? 'Loading History' : 'Live';
-                    document.getElementById('connection-status').textContent = `${status}: ${price.toFixed(2)}`;
+                    // Redraw footprint if enabled
+                    if (footprintEnabled) {
+                        drawFootprint();
+                    }
                 }
+
+                const price = data.ltp || data.close || 0;
+                const status = data.historical ? 'Loading History' : 'Live';
+                document.getElementById('connection-status').textContent = `${status}: ${price.toFixed(2)}`;
             });
         }
 
