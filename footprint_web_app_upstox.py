@@ -550,6 +550,14 @@ class UpstoxAPI:
         self.atm_fp_pe_key = None       # instrument_key for the locked ATM PE
         self.atm_fp_expiry = None       # expiry string for display
 
+        # User-selected strike for options footprint chart (different from atm_fp_strike)
+        # atm_fp_strike = locked at login (what we subscribed to first)
+        # ofp_selected_strike = what user is actually viewing (may differ if price moved)
+        self.ofp_selected_strike = None  # e.g., 24000 (even if ATM is now 24100)
+        self.ofp_selected_ce_key = None  # instrument_key for selected CE
+        self.ofp_selected_pe_key = None  # instrument_key for selected PE
+        self.ofp_is_out_of_range = False # flag: selected strike outside current subscription range
+
         # WebSocket Client
         self.ws_client = None
         
@@ -744,8 +752,8 @@ class UpstoxAPI:
                 print(f"📡 Subscribed {len(new_keys)} NIFTY option strikes (ATM={atm_strike}, expiry={nearest_expiry}, 100-pt increments)")
 
                 # Lock the ATM for the options footprint chart on FIRST subscription only.
-                # If ATM shifts later (when spot crosses 100-point boundary), UPDATE the lock
-                # to prevent offset mismatches and oscillation in the chart.
+                # Do NOT change the locked strike when ATM shifts — instead, track what strike
+                # the user is viewing separately (ofp_selected_strike).
                 if self.atm_fp_strike is None:
                     ce_key = opt_lookup.get((float(atm_strike), 'CE'))
                     pe_key = opt_lookup.get((float(atm_strike), 'PE'))
@@ -753,19 +761,40 @@ class UpstoxAPI:
                     self.atm_fp_ce_key = ce_key
                     self.atm_fp_pe_key = pe_key
                     self.atm_fp_expiry = nearest_expiry.strftime('%d %b %Y')
+                    
+                    # User starts viewing the locked (ATM) strike
+                    self.ofp_selected_strike = atm_strike
+                    self.ofp_selected_ce_key = ce_key
+                    self.ofp_selected_pe_key = pe_key
+                    self.ofp_is_out_of_range = False
+                    
                     print(f"🔒 Locked ATM footprint strike: {atm_strike} | CE={ce_key} | PE={pe_key}")
+                    print(f"👁️  User viewing strike: {self.ofp_selected_strike}")
                 elif self.atm_fp_strike != atm_strike:
-                    # ATM has shifted — update locked strike to prevent offset mismatches
-                    # This happens when spot price crosses a 100-point boundary during market hours
-                    old_strike = self.atm_fp_strike
-                    ce_key = opt_lookup.get((float(atm_strike), 'CE'))
-                    pe_key = opt_lookup.get((float(atm_strike), 'PE'))
-                    self.atm_fp_strike = atm_strike
-                    self.atm_fp_ce_key = ce_key
-                    self.atm_fp_pe_key = pe_key
-                    self.atm_fp_expiry = nearest_expiry.strftime('%d %b %Y')
-                    print(f"🔄 ATM shift detected: {old_strike} → {atm_strike}")
-                    print(f"   Updated locked CE={ce_key}, PE={pe_key}")
+                    # ATM has shifted — check if user's currently selected strike is still in range
+                    # New subscription range: atm_strike ± 300/200/100/0 (7 strikes)
+                    new_range = [atm_strike + i * 100 for i in range(-3, 4)]
+                    
+                    if self.ofp_selected_strike in new_range:
+                        # Selected strike is still in range — keep showing it
+                        print(f"🔄 ATM shifted {self.atm_fp_strike} → {atm_strike}, but selected {self.ofp_selected_strike} still in range")
+                        self.ofp_is_out_of_range = False
+                        # Find updated keys for the selected strike (may have changed instruments)
+                        ce_key = opt_lookup.get((float(self.ofp_selected_strike), 'CE'))
+                        pe_key = opt_lookup.get((float(self.ofp_selected_strike), 'PE'))
+                        if ce_key and pe_key:
+                            self.ofp_selected_ce_key = ce_key
+                            self.ofp_selected_pe_key = pe_key
+                    else:
+                        # Selected strike is OUT of range — auto-switch to new ATM
+                        print(f"⚠️  ATM shifted {self.atm_fp_strike} → {atm_strike}, selected {self.ofp_selected_strike} OUT OF RANGE")
+                        print(f"    Auto-switching chart to new ATM: {atm_strike}")
+                        self.ofp_selected_strike = atm_strike
+                        self.ofp_is_out_of_range = True
+                        ce_key = opt_lookup.get((float(atm_strike), 'CE'))
+                        pe_key = opt_lookup.get((float(atm_strike), 'PE'))
+                        self.ofp_selected_ce_key = ce_key
+                        self.ofp_selected_pe_key = pe_key
 
                 # Reset ATM options footprint volume tracking state so stale cumulative
                 # VTT doesn't produce a massive spike on the first tick after re-subscription.
@@ -1909,8 +1938,9 @@ def get_options_footprint_data():
             'count':        len(raw_data),
             'opt_type':     opt_type,
             'offset':       offset,
-            'locked_strike': upstox.atm_fp_strike,
+            'locked_strike': upstox.ofp_selected_strike,  # What user is currently viewing
             'locked_expiry': upstox.atm_fp_expiry,
+            'is_out_of_range': upstox.ofp_is_out_of_range,  # Flag: user should be notified
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500

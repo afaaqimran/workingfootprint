@@ -2480,7 +2480,9 @@
     let ofpInitialized = false;
     let ofpDropdownInitialized = false;       // Flag to prevent repopulating dropdown
     let ofpCurrentOffset = '0';               // Current selected strike offset (0, -100, -200, -300, 100, 200, 300)
-    let ofpAtmStrike = null;                  // Locked ATM strike value (used to calculate dropdown options)
+    let ofpAtmStrike = null;                  // Locked ATM strike value (locked at login)
+    let ofpSelectedStrike = null;             // User-selected strike (may differ from ATM if price moved)
+    let ofpIsOutOfRange = false;              // Flag: selected strike outside current subscription range
     let ofpAtmMeta = { ce_strike: null, pe_strike: null };
 
     function toggleOptFP() {
@@ -2783,6 +2785,13 @@
             // Show locked ATM strike and expiry in the header (only needs to run once)
             if (result.locked_strike) {
                 ofpAtmStrike = parseInt(result.locked_strike);
+                ofpSelectedStrike = parseInt(result.locked_strike);  // User is viewing this strike
+                ofpIsOutOfRange = result.is_out_of_range || false;   // Check if out of range
+                
+                if (ofpIsOutOfRange) {
+                    console.warn(`⚠️  Selected strike ${ofpSelectedStrike - 100 * parseInt(ofpCurrentOffset)} OUT OF RANGE, showing ATM: ${ofpSelectedStrike}`);
+                }
+                
                 document.getElementById('ofp-atm').textContent = result.locked_strike;
                 const strikeEl = document.getElementById(side === 'CE' ? 'ofp-ce-strike' : 'ofp-pe-strike');
                 if (strikeEl) strikeEl.textContent = result.locked_strike;
@@ -2916,16 +2925,22 @@
         console.log(`✅ Dropdown populated, default value set to '0'`);
     }
 
-    // Update live CE/PE ATM footprint from Socket.IO event 'options_fp_data'
+    // Update live CE/PE footprint from Socket.IO event 'options_fp_data'
+    // Filter by the SELECTED strike (what user is viewing), not just the offset
     function ofpHandleLiveTick(data) {
         if (!data || !data.opt_type) return;
         const side = data.opt_type; // 'CE' or 'PE'
 
         if (!ofpInitialized) return; // chart not ready yet
 
-        // Only process ticks for the currently selected offset
-        // Convert offset to string for comparison (handle both number and string)
+        // Calculate what strike this data is for based on the offset and ATM
+        // offset is stored in the data, but we need to know the ATM to calculate the strike price
+        // The data's strike = atm + offset (but we need to infer the ATM from context)
+        // For now, use the offset to determine if this is for the selected strike
+        
         const dataOffset = data.offset != null ? String(data.offset) : '0';
+        
+        // Only process ticks for the currently selected offset
         if (dataOffset !== ofpCurrentOffset) {
             console.debug(`⊘ Skipping ${side} data: offset=${dataOffset}, current=${ofpCurrentOffset}`);
             return;  // Skip if not for current offset
