@@ -744,8 +744,8 @@ class UpstoxAPI:
                 print(f"📡 Subscribed {len(new_keys)} NIFTY option strikes (ATM={atm_strike}, expiry={nearest_expiry}, 100-pt increments)")
 
                 # Lock the ATM for the options footprint chart on FIRST subscription only.
-                # Once set, atm_fp_strike never changes for the rest of the day — the footprint
-                # chart always tracks the same CE/PE contract regardless of where spot moves.
+                # If ATM shifts later (when spot crosses 100-point boundary), UPDATE the lock
+                # to prevent offset mismatches and oscillation in the chart.
                 if self.atm_fp_strike is None:
                     ce_key = opt_lookup.get((float(atm_strike), 'CE'))
                     pe_key = opt_lookup.get((float(atm_strike), 'PE'))
@@ -754,10 +754,23 @@ class UpstoxAPI:
                     self.atm_fp_pe_key = pe_key
                     self.atm_fp_expiry = nearest_expiry.strftime('%d %b %Y')
                     print(f"🔒 Locked ATM footprint strike: {atm_strike} | CE={ce_key} | PE={pe_key}")
+                elif self.atm_fp_strike != atm_strike:
+                    # ATM has shifted — update locked strike to prevent offset mismatches
+                    # This happens when spot price crosses a 100-point boundary during market hours
+                    old_strike = self.atm_fp_strike
+                    ce_key = opt_lookup.get((float(atm_strike), 'CE'))
+                    pe_key = opt_lookup.get((float(atm_strike), 'PE'))
+                    self.atm_fp_strike = atm_strike
+                    self.atm_fp_ce_key = ce_key
+                    self.atm_fp_pe_key = pe_key
+                    self.atm_fp_expiry = nearest_expiry.strftime('%d %b %Y')
+                    print(f"🔄 ATM shift detected: {old_strike} → {atm_strike}")
+                    print(f"   Updated locked CE={ce_key}, PE={pe_key}")
 
                 # Reset ATM options footprint volume tracking state so stale cumulative
                 # VTT doesn't produce a massive spike on the first tick after re-subscription.
-                # We do NOT reset when ATM shifts — the locked keys are unaffected anyway.
+                # We reset on EVERY subscription (including ATM shifts) to prevent volume spikes
+                # when switching between different strikes.
                 self.atm_ce_candle = None
                 self.atm_pe_candle = None
                 self.atm_ce_prev_volume = 0
