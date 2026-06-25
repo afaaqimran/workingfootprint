@@ -1100,9 +1100,10 @@ class UpstoxAPI:
                             cutoff_ltp = current_ts - 5 * 60 * 1000
                             self.ltp_history[instrument_key] = [(t, v) for t, v in lhist if t >= cutoff_ltp]
 
-                        # ── Options Footprint Processing for All Strikes ─────────────────────
-                        # Process all 14 strike/type combinations (7 strikes × 2 types)
-                        # This stores data for all offsets irrespective of UI selection
+                        
+                        # ── All-Strike Options Footprint (handles all 7 strikes for both CE/PE) ────────
+                        # This processes footprint for all 7 strikes irrespective of UI selection
+                        # Data is emitted with correct offset, allowing frontend to switch between strikes
                         for meta in self.options_meta:
                             if meta.get('instrument_key') == instrument_key and ltp_val > 0:
                                 offset = meta.get('offset', 0)
@@ -1116,22 +1117,15 @@ class UpstoxAPI:
                                 )
                                 break
                         
-                        # ── ATM Options Footprint Real-Time Emit ──────────────────────────────
-                        # Emit real-time footprint updates for locked ATM CE and PE
-                        if instrument_key == self.atm_fp_ce_key and ltp_val > 0:
-                            self._process_atm_option_footprint(
-                                opt_type='CE',
-                                ltp=ltp_val,
-                                vtt=int(full.get('vtt', 0) or 0),
-                                current_ts=current_ts
-                            )
-                        elif instrument_key == self.atm_fp_pe_key and ltp_val > 0:
-                            self._process_atm_option_footprint(
-                                opt_type='PE',
-                                ltp=ltp_val,
-                                vtt=int(full.get('vtt', 0) or 0),
-                                current_ts=current_ts
-                            )
+                        # ── ATM-only Real-Time Emit (DISABLED - duplicate of _process_all_strike_footprints) ──
+                        # The _process_atm_option_footprint was meant to emit ATM data exclusively,
+                        # but _process_all_strike_footprints already handles offset=0 (ATM).
+                        # Disabling this prevents duplicate emissions that cause oscillation when
+                        # user switches between different strike offsets.
+                        # if instrument_key == self.atm_fp_ce_key and ltp_val > 0:
+                        #     self._process_atm_option_footprint(...)
+                        # elif instrument_key == self.atm_fp_pe_key and ltp_val > 0:
+                        #     self._process_atm_option_footprint(...)
                     continue  # don't process options as futures candles
 
                 # ── Futures Chart Processing ──────────────────────────────────────────

@@ -2866,6 +2866,13 @@
         if (peStrikeEl) peStrikeEl.textContent = newStrikePrice;
         console.log(`✅ Strike display updated to: ${newStrikePrice}`);
         
+        // Clear current data to prevent oscillation from old candles
+        console.log(`🧹 Clearing chart data for offset transition`);
+        ofpCeData = [];
+        ofpPeData = [];
+        if (ofpCeSeries) ofpCeSeries.setData([]);
+        if (ofpPeSeries) ofpPeSeries.setData([]);
+        
         // Reload charts for the new offset
         console.log(`🔄 Loading history for offset ${ofpCurrentOffset}`);
         loadOfpHistory('CE');
@@ -2917,8 +2924,12 @@
         if (!ofpInitialized) return; // chart not ready yet
 
         // Only process ticks for the currently selected offset
-        const dataOffset = data.offset != null ? data.offset.toString() : '0';
-        if (dataOffset !== ofpCurrentOffset) return;  // Skip if not for current offset
+        // Convert offset to string for comparison (handle both number and string)
+        const dataOffset = data.offset != null ? String(data.offset) : '0';
+        if (dataOffset !== ofpCurrentOffset) {
+            console.debug(`⊘ Skipping ${side} data: offset=${dataOffset}, current=${ofpCurrentOffset}`);
+            return;  // Skip if not for current offset
+        }
 
         // Update status
         const statusEl = document.getElementById(side === 'CE' ? 'ofp-ce-status' : 'ofp-pe-status');
