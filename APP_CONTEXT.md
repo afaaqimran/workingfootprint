@@ -44,10 +44,10 @@ This document provides a complete reference for any AI system or developer worki
 | Volatility Skew (IV via Black-Scholes Newton-Raphson) | ✅ Complete | CE/PE IV curves, >20% amber highlighting |
 | Full Option Chain (CE/PE paired by strike) | ✅ Complete | OI highlighting, ITM/OTM coloring |
 | Rate of Change (RoC %) — rolling & fixed modes | ✅ Complete | 30s/1m/3m windows, per option |
-| Options Footprint Chart (ATM CE/PE locked) | ✅ Complete | Multi-strike selection, 7 offsets (ATM ±300/±200/±100), real-time updates for all offsets, dropdown with actual strike prices, current day data only |
+| Options Footprint Chart (100-pt strike increments) | ✅ Complete | 7 offsets (ATM ±300/±200/±100/ATM), user-selected strike persists through ATM shifts, auto-switch when out of range |
 | NIFTY Option Chain Time-Based Analysis | ✅ Complete | 5-min snapshots, 11 columns, PCR/Max Pain from APIs, auto-capture at 09:18 on login |
 | India VIX subscription & display | ✅ Complete | Real-time ticker in TBA header |
-| ATM strike locking (options footprint only) | ✅ Complete | Login-time lock, unaffected by spot movement |
+| Dynamic ATM tracking (options footprint) | ✅ Complete | Shifts with spot in 100-pt increments, 50-pt hysteresis prevents oscillation |
 | Top 3 OI highlighting with gradients | ✅ Complete | Option chain CE/PE columns |
 | Green/Red arrows for metric changes | ✅ Complete | PCR, IV, VIX, Max Pain, Fut OI Chg |
 | Footprint alert bell (Web Audio API) | ✅ Complete | Volume threshold, per-level deduplication |
@@ -56,6 +56,10 @@ This document provides a complete reference for any AI system or developer worki
 | Database per-symbol routing | ✅ Complete | NIFTY.db, BANKNIFTY.db, OPTIONS_ATM.db |
 | 180-day data retention | ✅ Complete | Auto cleanup on startup |
 | Responsive tab switching | ✅ Complete | Main controls hidden except on Chart tab |
+| File-based logging | ✅ Complete | 5-day rolling logs in `logs/` directory |
+| Pre-open period skip | ✅ Complete | Futures candles and ATM lock deferred until 09:15 IST |
+| Diagnostics endpoint | ✅ Complete | `/api/diagnostics` for instrument token debugging |
+| Historical data timeframe aggregation | ✅ Complete | Always resampled from 1-min raw data on-demand |
 
 ---
 
@@ -64,8 +68,8 @@ This document provides a complete reference for any AI system or developer worki
 **Application Name:** Afaaqs Foot Print Server  
 **Purpose:** Real-time NIFTY/BANKNIFTY futures footprint chart with options chain, straddle premium tracking, OI tracker, volatility skew chart, full option chain, ATM options footprint chart, and NIFTY Option Chain Time-Based Analysis — powered by Upstox WebSocket market data and Upstox REST APIs.  
 **Server:** Vultr VPS — IP `65.20.75.231`  
-**Port:** `5002` (firewall open)  
-**URL:** `http://65.20.75.231:5002`
+**Port:** `5001` (firewall open)  
+**URL:** `http://65.20.75.231:5001`
 
 ---
 
@@ -74,19 +78,20 @@ This document provides a complete reference for any AI system or developer worki
 | Item | Detail |
 |------|--------|
 | OS | Linux (Ubuntu) |
-| App directory | `/opt/finalfootprint` |
-| Python venv | `/opt/finalfootprint/venv` |
+| App directory | `/opt/footprintupstox` |
+| Python venv | `/opt/footprintupstox/venv` |
 | WSGI server | Gunicorn with eventlet worker, 1 worker |
-| systemd service | `finalfootprint.service` |
-| Service file | `/etc/systemd/system/finalfootprint.service` |
-| Start/stop | `systemctl start/stop/restart finalfootprint` |
-| Logs | `journalctl -u finalfootprint -f` |
-| Firewall | UFW — ports 22, 5001, 5002 open |
+| systemd service | `footprint.service` |
+| Service file | `/etc/systemd/system/footprint.service` |
+| Start/stop | `systemctl start/stop/restart footprint` |
+| Logs (systemd) | `journalctl -u footprint -f` |
+| Logs (file) | `/opt/footprintupstox/logs/footprint_YYYYMMDD.log` (5-day retention) |
+| Firewall | UFW — ports 22, 5001 open |
 
 **Service definition:**
 ```
-WorkingDirectory=/opt/finalfootprint
-ExecStart=/opt/finalfootprint/venv/bin/gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5002 footprint_web_app_upstox:app
+WorkingDirectory=/opt/footprintupstox
+ExecStart=/opt/footprintupstox/venv/bin/gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5001 footprint_web_app_upstox:app
 Restart=always
 ```
 
@@ -110,16 +115,19 @@ python footprint_web_app_upstox.py
 ssh root@65.20.75.231
 
 # Manage service
-systemctl start/stop/restart finalfootprint
-systemctl status finalfootprint
+systemctl start/stop/restart footprint
+systemctl status footprint
 
-# View logs
-journalctl -u finalfootprint -f
+# View logs (systemd)
+journalctl -u footprint -f
+
+# View logs (file — 5-day retention)
+tail -f /opt/footprintupstox/logs/footprint_$(date +%Y%m%d).log
 
 # Deploy changes
-cd /opt/finalfootprint
+cd /opt/footprintupstox
 git pull origin main
-systemctl restart finalfootprint
+systemctl restart footprint
 ```
 
 ### Key Files to Edit
@@ -128,6 +136,7 @@ systemctl restart finalfootprint
 | `footprint_web_app_upstox.py` | All backend routes, APIs, state management |
 | `templates/chart.html` | All UI tabs, JavaScript logic, styling |
 | `requirements_upstox.txt` | Python dependencies |
+| `log_manager.py` | File logging system (5-day retention) |
 
 ---
 
@@ -135,19 +144,17 @@ systemctl restart finalfootprint
 
 | Item | Detail |
 |------|--------|
-| Primary repo | `https://github.com/afaaqimran/finalfootprint.git` |
-| Backup repo | `https://github.com/afaaqimran/Footprintandoptiontrigger.git` |
+| Primary repo | `https://github.com/afaaqimran/workingfootprint.git` |
 | Active branch | `main` |
-| Default branch | `main` (merged from `feature/options-chain-websocket-stability`) |
 | GitHub PAT | Stored in git remote URL (use `git remote -v` to check) |
-| Clone command | `git clone https://<PAT>@github.com/afaaqimran/finalfootprint.git` |
+| Clone command | `git clone https://<PAT>@github.com/afaaqimran/workingfootprint.git` |
 
-**To push to backup:**
+**To push:**
 ```bash
-cd /opt/finalfootprint
+cd /opt/footprintupstox
 git add -A
 git commit -m "your message"
-git push backup main
+git push origin main
 ```
 
 **Current git status (local dev):**
@@ -157,6 +164,7 @@ M  footprint_web_app_upstox.py (backend with all features)
 M  templates/chart.html        (frontend with all tabs)
 ?? .vscode/                    (IDE config, not committed)
 ?? footprint_data_*.db         (SQLite DBs, not committed)
+?? logs/                       (log files, not committed)
 ```
 
 ---
@@ -166,10 +174,11 @@ M  templates/chart.html        (frontend with all tabs)
 ## File Structure
 
 ```
-/opt/finalfootprint/
+/opt/footprintupstox/
 ├── footprint_web_app_upstox.py     # Main Flask app — all routes, data processing, WebSocket logic
 ├── upstox_websocket_v3.py          # Upstox WebSocket client with auto-reconnect
 ├── instrument_manager.py           # Downloads/caches Upstox instrument master (futures contracts)
+├── log_manager.py                  # File-based logging system with 5-day retention and auto-cleanup
 ├── MarketDataFeed_pb2.py           # Protobuf decoder for Upstox market data feed
 ├── MarketDataFeed_pb2_grpc.py      # gRPC stub (unused but required by protobuf)
 ├── auto_session.sh                 # Cron script for auto login/logout
@@ -179,6 +188,8 @@ M  templates/chart.html        (frontend with all tabs)
 ├── footprint_data.db               # SQLite DB — default/fallback DB
 ├── instruments_cache.json          # Cached Upstox instrument master (refreshed every 24h)
 ├── footprint.service               # Original service file (reference only)
+├── logs/                           # File log directory (5-day rolling logs)
+│   └── footprint_YYYYMMDD.log      # Daily log file (auto-cleaned after 5 days)
 ├── templates/
 │   ├── chart.html                  # Main chart UI (footprint + options chain + straddle + OI tracker + volatility skew + full option chain + options footprint chart + time-based analysis tabs)
 │   └── login_upstox.html           # Login page
@@ -199,7 +210,7 @@ M  templates/chart.html        (frontend with all tabs)
 - API Secret: `ezbpksdbmk`
 
 **Login flow:**
-1. User opens `http://65.20.75.231:5002`
+1. User opens `http://65.20.75.231:5001`
 2. Clicks "Login" — no token input needed
 3. Backend verifies analytics token against `/v3/feed/market-data-feed/authorize`
 4. Session created with `user_id = 'analytics_user'`
@@ -216,9 +227,11 @@ The app auto-logs in at market open and logs out at market close, Monday–Frida
 | Login  | 9:13 AM | `43 3 * * 1-5` |
 | Logout | 3:31 PM | `1 10 * * 1-5` |
 
-**Script:** `/opt/finalfootprint/auto_session.sh login|logout`  
+**Script:** `/opt/footprintupstox/auto_session.sh login|logout`  
 **Log:** `/var/log/footprint_session.log`  
 **Session cookie:** `/opt/finalfootprint/.session_cookie`
+
+> **Note:** The auto_session.sh script still references `/opt/finalfootprint` and port `5001` internally — verify these are correct if issues arise with auto login/logout.
 
 ---
 
@@ -279,7 +292,7 @@ On login, the app subscribes to:
 |---------|----------|
 | `footprint_data_NIFTY.db` | NIFTY 1-min candles + footprint levels |
 | `footprint_data_BANKNIFTY.db` | BANKNIFTY (created on first BANKNIFTY data) |
-| `footprint_data_OPTIONS_ATM.db` | ATM CE (`NIFTY_CE_ATM`) and PE (`NIFTY_PE_ATM`) 1-min option candles + footprint levels. Locked to login-time ATM strike for the entire day. |
+| `footprint_data_OPTIONS_ATM.db` | Options 1-min candle + footprint levels. Each strike stored under its own symbol key (e.g. `NIFTY_CE_24500`, `NIFTY_PE_24400`). Continuous per-strike history — ATM shifts never cause price discontinuities. |
 | `footprint_data.db` | Default fallback |
 
 **Tables (all databases share the same schema):**
@@ -300,18 +313,20 @@ On login, the app subscribes to:
 | `/logout` | GET | Disconnect WebSocket, clear session |
 | `/api/current-user` | GET | Check session status |
 | `/api/user-symbols` | GET | Get available futures contracts (NIFTY/BANKNIFTY) |
-| `/api/stored-data` | GET | Historical candle + footprint data (params: symbol, timeframe, days) |
+| `/api/stored-data` | GET | Historical candle + footprint data (params: symbol, timeframe, days). Always fetches 1-min raw data from DB and resamples on-demand |
 | `/api/live-data` | GET | Latest live data snapshot |
 | `/api/change-instrument` | POST | Switch futures instrument + lot size |
 | `/api/change-timeframe` | POST | Switch chart timeframe |
+| `/api/diagnostics` | GET | Expose current instrument state: symbol, token, timeframe, CE/PE keys, WS connection status. Useful for debugging token mismatch |
 | `/api/options-chain` | GET | NIFTY options chain from WebSocket cache, includes T2 (SMA) and T3 (OI trend) signals |
 | `/api/straddle` | GET | Straddle premiums (CE+PE) per strike |
 | `/api/oi-tracker` | GET | OI + OI change % (5m/10m/15m/30m) for all subscribed options |
 | `/api/volatility-skew` | GET | Implied volatility per strike computed via Black-Scholes (Newton-Raphson solver) |
 | `/api/option-chain-full` | GET | Full option chain paired by strike — CE left, PE right, with OI, OHLC, LTP |
 | `/api/roc` | GET | Rate of change % of option LTP over 30s/1m/3m — rolling or fixed mode (`?mode=rolling\|fixed`) |
-| `/api/options-footprint-data` | GET | Historical ATM CE/PE option candle + footprint data from `footprint_data_OPTIONS_ATM.db` (params: type=CE\|PE, days) |
+| `/api/options-footprint-data` | GET | Historical ATM CE/PE option candle + footprint data from `footprint_data_OPTIONS_ATM.db` (params: type=CE\|PE, days, offset). Returns `locked_strike` (selected strike = atm+offset), `atm_strike` (true current ATM), `is_out_of_range` flag |
 | `/api/tba-snapshot` | GET | Single Time-Based Analysis snapshot — Nifty Spot, PCR (Upstox API), Put/Call OI, IV, VIX, Support/Resistance, Max Pain (Upstox API), Futures OI Change %, Bias |
+| `/api/logs-stats` | GET | Log manager statistics (log file sizes, retention info) |
 
 ---
 
@@ -425,46 +440,52 @@ Nine tabs on the left vertical sidebar:
 - Data sourced from `ltp_history` (per instrument key, rolling 5-min window recorded on every options tick)
 
 ### 🕯 Options Footprint Chart Tab
-- **Multi-Strike Selection:** Users can now view and switch between 7 different strike offsets in addition to the locked ATM
-  - Dropdown selector shows actual strike prices (e.g., 24200, 24300, 24400 instead of generic labels)
+- **Multi-Strike Selection:** Users can view and switch between 7 different strike offsets
+  - Dropdown selector shows actual strike prices (e.g., 24200, 24300, 24400)
   - 7 available offsets: ATM-300, ATM-200, ATM-100, ATM, ATM+100, ATM+200, ATM+300
-  - ATM strike is **locked at login time** — computed from NIFTY spot at the moment of first options subscription, then fixed for the entire trading day
-  - Selection persists when switching between offsets
-  
+  - Strike increment is **100 points** (not 50-point steps used by the main options chain)
+  - ATM shifts dynamically with NIFTY spot during the trading day (100-pt increments, 50-pt hysteresis)
+  - **User-selected strike persists:** If user views 24000 and ATM moves to 24100, the chart stays on 24000 as long as it remains within the ±300 subscription range
+  - **Auto-switch:** If selected strike falls out of the subscription range, chart auto-switches to the new ATM and sets `is_out_of_range = true`
+
 - **Real-Time Updates for All Offsets:**
   - All 14 strike/type combinations (7 offsets × CE/PE) subscribe to WebSocket and receive real-time ticks
+  - Single emission source: `_process_all_strike_footprints()` — eliminates race conditions
   - Charts update instantly as new candles form for the selected offset
   - Data for all 14 combinations stored in database (`footprint_data_OPTIONS_ATM.db`)
-  - When offset changed, charts load current-day data and display with real-time updates
-  
+  - Chart data is cleared before loading a new strike to prevent stale candle oscillation
+
 - **Side-by-side Candlestick + Footprint Charts:**
   - Left half: **CALL (CE)** contract for selected offset
   - Right half: **PUT (PE)** contract for selected offset
-  - Each chart shows locked ATM reference and selected offset actual strike
-  
+
 - **Independent Toolbar** (separate from futures chart controls):
   - **Strike Dropdown:** Select from 7 offset options with actual strike prices
   - Spot price display (live, updates every 5 seconds)
-  - Current strike info (locked ATM and selected offset)
+  - Current strike info (current ATM and selected offset)
   - TF buttons: 1m / 3m / 5m / 15m (client-side resampling of 1-min stored data)
   - **Footprint toggle** — starts ON by default
   - **Buy ≥** filter — hides buy boxes below threshold
   - **Sell ≥** filter — hides sell boxes below threshold
   - **Trace ≥** filter — hides all boxes (buy or sell) below threshold
-  
+
 - **Data Sources:**
   - Historical data loaded from `footprint_data_OPTIONS_ATM.db` per offset via `/api/options-footprint-data?offset={value}`
   - Current day only (no historical date range)
   - Live updates via Socket.IO `options_fp_data` event with offset field
   - All 14 combinations processed automatically regardless of UI selection
-  
+
 - **Canvas Footprint Overlay:**
   - Buy volume boxes: right side, teal border
   - Sell volume boxes: left side, red border
   - Footprint volume uses raw contract count (no lot-size flooring)
-  
+
 - **Time Display:**
   - LightweightCharts IST time offset (+19800s) applied for accurate market timestamps
+
+- **Pre-Open Protection:**
+  - Options subscription and ATM calculation are deferred until 09:15 IST
+  - Prevents incorrect ATM from pre-open price action
 
 ### ⏱ NIFTY Option Chain Time-Based Analysis Tab
 - **Auto-capture on login:** TBA snapshot capture automatically starts at 09:18 IST (or first `:X3/:X8` boundary after market open) immediately after user login, without requiring manual action
@@ -646,19 +667,42 @@ Both use the existing `ANALYTICS_TOKEN` for authorisation. Expiry is auto-conver
 | `DataStorage` | `footprint_web_app_upstox.py` | SQLite read/write, resampling, DB routing |
 | `InstrumentManager` | `instrument_manager.py` | Instrument master download/cache/lookup |
 | `UpstoxWebSocketV3` | `upstox_websocket_v3.py` | WebSocket client with reconnect |
+| `LogManager` | `log_manager.py` | File-based logging, 5-day retention, auto-cleanup on startup |
 
 ## ATM Lock — Options Footprint Chart
 
-The following `UpstoxAPI` fields are set **once at login** (first call to `subscribe_options_strikes`) and never changed again during the session:
+The ATM strike is now tracked with two separate concepts:
+
+**Login-time lock (`atm_fp_strike`)** — set once at first options subscription and updated only when ATM shifts during the trading day (see below).
+
+**User-selected strike (`ofp_selected_strike`)** — tracks what the user is actually viewing. May differ from `atm_fp_strike` if the user picks a different offset from the dropdown.
+
+The following `UpstoxAPI` fields govern options footprint state:
 
 | Field | Description |
 |-------|-------------|
-| `atm_fp_strike` | Locked ATM strike value (e.g. `24500`) |
-| `atm_fp_ce_key` | Instrument key for the locked ATM CE contract |
-| `atm_fp_pe_key` | Instrument key for the locked ATM PE contract |
+| `atm_fp_strike` | Current ATM strike value (e.g. `24500`). Set at login and updated on ATM shift. |
+| `atm_fp_ce_key` | Instrument key for the current ATM CE contract |
+| `atm_fp_pe_key` | Instrument key for the current ATM PE contract |
 | `atm_fp_expiry` | Expiry date string for display (e.g. `05 Jun 2026`) |
+| `ofp_selected_strike` | Strike the user is currently viewing (may differ from `atm_fp_strike`) |
+| `ofp_selected_ce_key` | Instrument key for the user-selected CE contract |
+| `ofp_selected_pe_key` | Instrument key for the user-selected PE contract |
+| `ofp_is_out_of_range` | `True` if the user-selected strike has moved outside the current ±300 subscription range |
 
-When the ATM monitor re-subscribes options after a spot move, these fields are unchanged — the options footprint chart continues recording ticks for the original ATM CE/PE contracts.
+**ATM Shift Behaviour (100-point increments, 50-pt hysteresis):**
+- ATM is calculated in 100-point increments (not 50-point as with main options chain)
+- A hysteresis of 50 pts prevents oscillation at boundaries: spot must move ≥50 pts past the midpoint before ATM shifts
+- When ATM shifts, `atm_fp_strike` is updated immediately to the new value
+- If the user-selected strike is still within the new ±300 range: chart stays on the selected strike, `ofp_selected_ce_key`/`ofp_selected_pe_key` updated to new expiry keys
+- If the user-selected strike falls out of range: auto-switches to new ATM, `ofp_is_out_of_range = True` to notify frontend
+
+**Example scenario:**
+- User views 24000 CE/PE (ATM=24000, offset=0)
+- Spot rises to 24150 → ATM shifts to 24100
+- 24000 still in range (ATM±300 = 23800–24400) → chart stays on 24000 ✓
+- Spot rises to 24510 → ATM shifts to 24500
+- 24000 is now out of range (ATM±300 = 24200–24800) → auto-switch to 24500 ✓
 
 All other features (`options_chain`, `straddle`, `oi_tracker`, `volatility_skew`, `option_chain_full`, `roc`, `tba_snapshot`) derive ATM dynamically from `round(nifty_spot_ltp / 50) * 50` on every API call and are unaffected by the lock.
 
@@ -667,6 +711,10 @@ All other features (`options_chain`, `straddle`, `oi_tracker`, `volatility_skew`
 | Variable | Description |
 |----------|-------------|
 | `vix_ltp` | Live India VIX — updated from `NSE_INDEX\|India VIX` WebSocket subscription (ltpc mode). Used by `/api/tba-snapshot`. |
+| `ofp_selected_strike` | The strike the user is currently viewing in the Options Footprint chart. May differ from `atm_fp_strike` if the user has picked a non-ATM offset, or if ATM has shifted since selection. |
+| `ofp_selected_ce_key` | Instrument key for the CE contract of `ofp_selected_strike` |
+| `ofp_selected_pe_key` | Instrument key for the PE contract of `ofp_selected_strike` |
+| `ofp_is_out_of_range` | `True` when `ofp_selected_strike` falls outside the current ATM±300 subscription range, triggering auto-switch to new ATM |
 
 ### Socket.IO Events
 
@@ -694,30 +742,57 @@ All other features (`options_chain`, `straddle`, `oi_tracker`, `volatility_skew`
 
 ### Debug WebSocket issues
 ```bash
-# Monitor live ticks on the server
-journalctl -u finalfootprint -f | grep -E "(WebSocket|subscribe|process)"
+# Monitor live ticks on the server (systemd)
+journalctl -u footprint -f | grep -E "(WebSocket|subscribe|process)"
+
+# Monitor via file logs
+tail -f /opt/footprintupstox/logs/footprint_$(date +%Y%m%d).log
+
+# Check instrument token mismatch (new diagnostics endpoint)
+curl http://localhost:5001/api/diagnostics
 
 # Check if instrument keys are correct
-grep "instrument_key" /opt/finalfootprint/footprint_web_app_upstox.py
+grep "instrument_key" /opt/footprintupstox/footprint_web_app_upstox.py
 ```
+
+### Debug futures chart not updating
+- **Symptom:** Options footprint chart updates live, but futures chart is static
+- **Cause:** Instrument token mismatch — `self.instrument_token` in backend doesn't match the WebSocket feed key
+- **Fix:** Call `/api/diagnostics` to verify current token matches. Throttled warning logs (once per minute) will appear in logs when mismatch detected.
+- **Note:** The `isPlaying` gate has been removed from the `ohlc_data` socket listener — futures chart now updates unconditionally regardless of Play/Pause state.
 
 ### Reset database or clear old data
 ```bash
 # Manual cleanup
-rm /opt/finalfootprint/footprint_data_*.db
+rm /opt/footprintupstox/footprint_data_*.db
 
 # Cleanup runs automatically on app restart (180-day retention)
-systemctl restart finalfootprint
+systemctl restart footprint
 ```
 
 ### Update NIFTY lot size globally
-- Search for `NIFTY_LOT_SIZE = 65` in `footprint_web_app_upstox.py`
-- Also check BANKNIFTY: `BANKNIFTY_LOT_SIZE = 30`
+- Search for `self.lot_size = 65` in `footprint_web_app_upstox.py` (in `FootprintProcessor.__init__`)
+- Also update default in `change_instrument` route: `lot_size = data.get('lot_size', 65)`
+- Options footprint always uses `lot_size = 1` (raw contracts)
 - Redeploy after changes
+
+### Debug timeframe switching issues
+- **Symptom:** After switching TF (e.g. 3min → 1min), old candles show from previous TF
+- **Root cause was fixed:** `get_stored_data()` now always fetches 1-min raw data from DB and resamples on-demand
+- If issue recurs, check `DataStorage.get_stored_data()` — `timeframe` param in the DB query must be hardcoded to `'1'`
 
 ### Export historical data
 - TBA snapshots: Use 📊 tab "⬇ CSV" button to export current session
-- Futures candles: Query SQLite directly: `sqlite3 footprint_data_NIFTY.db "SELECT * FROM candles LIMIT 100;"`
+- Futures candles: Query SQLite directly: `sqlite3 /opt/footprintupstox/footprint_data_NIFTY.db "SELECT * FROM candles LIMIT 100;"`
+
+### Check log files
+```bash
+# View today's log
+cat /opt/footprintupstox/logs/footprint_$(date +%Y%m%d).log
+
+# View log stats via API
+curl http://localhost:5001/api/logs-stats
+```
 
 ---
 
@@ -729,13 +804,16 @@ systemctl restart finalfootprint
 - **Options data 13 strikes only:** PCR/Max Pain from full Upstox API, but IV/SR calculated from 13 near-ATM subscribed strikes only.
 - **OI change % shows — for first N minutes:** Until `oi_history` accumulates 3+ ticks for each interval.
 - **Browser cache:** Clear cache if seeing stale chart after deployment (`Cmd+Shift+R` on Mac).
+- **Options footprint uses 100-pt strike increments:** The subscribed strikes are ATM ± 300/200/100/0 in 100-point steps. The main options chain still uses 50-point steps for its calculations.
 
 ### Workarounds & Fixes
-- **WebSocket reconnection slow:** Increase `wait_for_connection()` timeout in `/opt/finalfootprint/upstox_websocket_v3.py` if needed.
-- **ATM options footprint locked forever:** By design — restart app to unlock and recalculate ATM.
+- **WebSocket reconnection slow:** Increase `wait_for_connection()` timeout in `upstox_websocket_v3.py` if needed.
+- **ATM options footprint auto-adjusts:** ATM now shifts with spot price (100-pt increments, 50-pt hysteresis). If you want to hard-lock ATM for the day, restart app and keep spot stable during first subscription.
 - **API timeout (PCR/Max Pain):** Catch exception in `/api/tba-snapshot`, uses local fallback automatically (check logs for ℹ️ entry).
 - **IV calculation returns None:** Check if option LTP < intrinsic value (algorithm rejects such inputs).
 - **Chart x-axis shows UTC instead of IST:** Ensure client browser timezone is set correctly; server sends IST offset (+19800s).
+- **Futures chart not updating:** Check `/api/diagnostics` for token mismatch. The `isPlaying` gate has been removed so live updates are unconditional.
+- **Options footprint dropdown shows wrong strikes after ATM shift:** Fixed in Session 9 — backend now returns `atm_strike` separately, frontend uses it for dropdown math and chart title calculation.
 
 ### Common Error Messages
 | Error | Cause | Fix |
@@ -751,16 +829,15 @@ systemctl restart finalfootprint
 
 **Restore from backup files (if a change breaks the app):**
 ```bash
-cp /opt/finalfootprint/footprint_web_app_upstox.py.backup_20260321_110147 /opt/finalfootprint/footprint_web_app_upstox.py
-cp /opt/finalfootprint/templates/login_upstox.html.backup_20260321_110147 /opt/finalfootprint/templates/login_upstox.html
-systemctl restart finalfootprint
+cp /opt/footprintupstox/footprint_web_app_upstox.py.backup_20260321_110147 /opt/footprintupstox/footprint_web_app_upstox.py
+systemctl restart footprint
 ```
 
 **Restore from git:**
 ```bash
-cd /opt/finalfootprint
-git checkout feature/options-chain-websocket-stability -- footprint_web_app_upstox.py
-systemctl restart finalfootprint
+cd /opt/footprintupstox
+git checkout main -- footprint_web_app_upstox.py
+systemctl restart footprint
 ```
 
 ---
@@ -792,103 +869,142 @@ protobuf>=4.21.0
 | Session 4 | 5 June 2026 | NIFTY Option Chain Time-Based Analysis tab, India VIX subscription, PCR/Max Pain via Upstox APIs, capture schedule 09:18+ every 5 min, Options Footprint chart with ATM lock, top 3 OI gradient highlighting |
 | Session 5 | 8 June 2026 | Documentation review & update, all features verified working |
 | Session 6 | 17 June 2026 | Trace filter default updated to 10000, TBA auto-capture on login, Options Footprint multi-strike real-time updates with dropdown selection, comprehensive fixes for chart display and offset filtering |
+| Session 7 | 17–24 June 2026 | File-based logging (5-day retention), pre-open period skip (before 09:15) for futures candles and ATM lock, historical data timeframe aggregation fix, futures chart live update fix (removed isPlaying gate), `/api/diagnostics` endpoint, ATM oscillation fix (100-pt increments + 50-pt hysteresis) |
+| Session 8 | 24–25 June 2026 | Options Footprint oscillation eliminated (single emission source), user-selected strike persistence through ATM shifts, out-of-range auto-switch to new ATM, app directory migrated to `/opt/footprintupstox`, repository changed to `workingfootprint` |
+| Session 9 | 30 June 2026 | Options Footprint dropdown strike labels fix — dropdown and chart titles now show correct strikes after ATM shifts |
+| Session 10 | 1 July 2026 | Port corrected to 5001, service renamed to `footprint.service`. Options Footprint per-strike DB storage — symbols now keyed by actual strike price (e.g. `NIFTY_CE_24500`) instead of offset (`NIFTY_CE_0`), eliminating price discontinuities when ATM shifts. Live tick filtering changed from offset-based to strike-based. |
 
 ---
 
-### Session 6 Updates (17 June 2026) — Major Options Footprint Enhancements
+### Session 7 Updates (17–24 June 2026)
 
-**Overview:**
-Fixed critical issues with Options Footprint chart real-time updates and multi-strike selection. The chart now displays live data for all 7 strike offsets (ATM ±300, ±200, ±100, ATM) with smooth dropdown switching and real-time WebSocket updates.
+#### 1. File-Based Logging System
+- **File:** `log_manager.py` (new)
+- **Change:** Added `LogManager` class with 5-day rolling file logs
+- **Log location:** `/opt/footprintupstox/logs/footprint_YYYYMMDD.log`
+- **Behaviour:** Auto-cleans log files older than 5 days on startup
+- **API:** `/api/logs-stats` exposes log manager statistics
 
-**Changes Made:**
+#### 2. Pre-Open Period Skip
+- **File:** `footprint_web_app_upstox.py`
+- **Futures candles:** Candles before 09:15 IST are not stored to DB — pre-open trades have erratic price action
+- **ATM lock:** Options subscription (and ATM calculation) is deferred until 09:15 IST. Prevents incorrect ATM from pre-open prices.
 
-#### 1. Trace Filter Default Value Updated
-- **File:** `templates/chart.html` (line 305)
-- **Change:** Default trace value changed from `100000` to `10000`
-- **Reason:** Lower sensitivity for detecting lower-volume trades in main futures footprint chart
-- **Scope:** Affects NIFTY/BANKNIFTY futures footprint chart only (Chart tab)
+#### 3. Historical Data Timeframe Aggregation Fix
+- **File:** `footprint_web_app_upstox.py` → `DataStorage.get_stored_data()`
+- **Change:** Always queries 1-min raw data from DB and resamples on-demand
+- **Reason:** Switching timeframes (3min → 1min) was showing candles from the previous TF because the DB was filtered by the requested timeframe directly
 
-#### 2. TBA Auto-Capture on Login
-- **File:** `templates/chart.html` (line 953)
-- **Change:** Added `tbaInitPanel()` call to socket connect event handler
-- **Behavior:** 
-  - Upon successful login, the TBA capture scheduler activates automatically
-  - First snapshot triggers at 09:18 IST (or next `:X3/:X8` boundary after market open)
-  - Subsequent snapshots every 5 minutes (09:23, 09:28, 09:33, etc.)
-  - Users no longer need to manually click "📸 Capture Now" to begin data collection
-- **Data Collection:** Happens transparently in the background; TBA panel not required to be open
-- **Manual Option:** Users can still click "📸 Capture Now" at any time to force an immediate snapshot
+#### 4. Futures Chart Live Update Fix
+- **File:** `templates/chart.html`
+- **Change:** Removed `isPlaying` gate from the `ohlc_data` Socket.IO listener
+- **Result:** Futures chart updates unconditionally in real-time; Play/Pause state no longer affects live tick processing
 
-#### 3. Options Footprint Real-Time Updates - Critical Fixes ✅
+#### 5. `/api/diagnostics` Endpoint
+- **File:** `footprint_web_app_upstox.py`
+- **Change:** New endpoint exposes current instrument state
+- **Returns:** symbol, token, timeframe, CE/PE keys, WebSocket connection status
+- **Purpose:** Debug token mismatches that silently skip futures data
 
-**Issue 1: Missing Offset Field in Socket Events**
-- **File:** `footprint_web_app_upstox.py` (line 844)
-- **Fix:** Added `'offset': 0` to base_update in `_process_atm_option_footprint()`
-- **Impact:** Frontend can now filter Socket.IO events by offset correctly
-
-**Issue 2: ATM Footprint Processing Never Called**
-- **File:** `footprint_web_app_upstox.py` (lines 1052-1063)
-- **Fix:** Added checks for ATM CE/PE instrument keys in `process_websocket_data()`
-- **Impact:** Real-time Socket.IO events now emitted for locked ATM CE/PE contracts
-
-**Issue 3: Non-ATM Offsets (±100, ±200, ±300) Not Emitted in Real-Time**
-- **File:** `footprint_web_app_upstox.py` (lines 952-964)
-- **Fix:** Added `socketio.emit()` calls to `_process_all_strike_footprints()`
-- **Impact:** All 14 strike combinations (7 offsets × 2 types) now emit real-time events for chart updates
-
-**Issue 4: Dropdown Value Always Reset to ATM**
-- **File:** `templates/chart.html` (lines 2484, 2793-2797)
-- **Fix:** Added `ofpDropdownInitialized` flag to prevent `populateStrikeDropdown()` from being called multiple times
-- **Root Cause:** Function was called every time `loadOfpHistory()` ran, resetting dropdown to '0'
-- **Impact:** Dropdown selection now persists when user switches between offsets
-
-**Issue 5: Charts Not Displaying Data After Offset Switch**
-- **File:** `templates/chart.html` (lines 2808-2835)
-- **Fix:** 
-  - Added enhanced console logging for debugging
-  - Added `fitContent()` call to auto-fit chart after data load
-  - Improved data validation and error messages
-- **Impact:** Charts now display correctly with proper data for each offset
-
-#### 4. Options Footprint Chart Features Now Working
-
-**Multi-Strike Selection:**
-- ✅ Dropdown shows actual strike prices (e.g., 24200, 24300, 24400 instead of "ATM±100")
-- ✅ User can select any of 7 strike offsets (ATM ±300, ±200, ±100, ATM)
-- ✅ Selection persists and doesn't reset to ATM
-- ✅ Charts display correct data immediately upon selection
-
-**Real-Time Updates:**
-- ✅ All 14 strike combinations receive real-time WebSocket ticks
-- ✅ Charts update instantly as new ticks arrive
-- ✅ Footprint boxes (buy/sell volume) drawn correctly
-- ✅ Both CE and PE series update simultaneously
-
-**Data Persistence:**
-- ✅ All 14 strike combinations stored in database (`NIFTY_CE_-300` to `NIFTY_CE_300`, same for PE)
-- ✅ Current day data loaded from DB when offset selected
-- ✅ Historical candles available for all offsets
-
-**Verified via Console Logs:**
-```
-✅ Setting CE chart data with 13 candles
-  First candle: {time: 1781790180, open: 132.05, high: 132.05, low: 132, close: 132.05, …}
-  Last candle: {time: 1781791560, open: 120.7, high: 120.95, low: 120.5, close: 120.5, …}
-✅ Setting PE chart data with 13 candles
-  First candle: {time: 1781790180, open: 106.4, high: 106.55, low: 106.4, close: 106.4, …}
-  Last candle: {time: 1781791560, open: 115.8, high: 116.4, low: 115.5, close: 116.15, …}
-```
-
-#### 5. Documentation Created
-
-| File | Purpose |
-|------|---------|
-| `OPTIONS_FP_REALTIME_FIX_DETAILED.md` | Comprehensive analysis of ATM emission fix |
-| `DROPDOWN_OFFSET_FIX.md` | Multi-strike offset real-time emission fix |
-| `DROPDOWN_VALUE_RESET_FIX.md` | Dropdown persistence fix documentation |
-| `OPTIONS_FP_COMPLETE_FIX_SUMMARY.md` | Complete fix summary and verification |
-| `VERIFICATION_REPORT.md` | 100pt vs 50pt rounding verification |
+#### 6. ATM Oscillation Fix (100-pt increments + hysteresis)
+- **File:** `footprint_web_app_upstox.py` → `_atm_monitor()`
+- **Change:** ATM now calculated using 100-point increments with 50-point hysteresis buffer
+- **Before:** ATM used 50-point increments causing rapid oscillation at boundaries
+- **After:** Spot must move ≥50 pts past a 100-pt boundary before ATM shifts
+- **Constants:** `STRIKE_STEP = 100`, `HYSTERESIS = 50`
 
 ---
 
-*Last updated: 17 June 2026 (session 6)*
+### Session 8 Updates (24–25 June 2026)
+
+#### 1. Options Footprint Oscillation Eliminated
+- **Files:** `footprint_web_app_upstox.py`, `templates/chart.html`
+- **Root cause:** Duplicate emission — both `_process_atm_option_footprint()` and `_process_all_strike_footprints()` emitted Socket.IO events, causing race conditions
+- **Fix:** Disabled ATM-specific duplicate emission; only `_process_all_strike_footprints()` is the single source of truth for all 14 offset/type combinations
+- **Frontend:** `switchOfpStrike()` now clears chart data before loading new strike to prevent stale candles
+
+#### 2. User-Selected Strike Persistence
+- **File:** `footprint_web_app_upstox.py`
+- **New fields:** `ofp_selected_strike`, `ofp_selected_ce_key`, `ofp_selected_pe_key`, `ofp_is_out_of_range`
+- **Behaviour:** When ATM shifts, the user's selected strike stays locked as long as it remains within the new ±300 subscription range. Only auto-switches to new ATM when selected strike goes out of range.
+- **Out-of-range flag:** `is_out_of_range` returned by `/api/options-footprint-data` so frontend can show a notification
+
+#### 3. App Directory & Repository Migration
+- **Old path:** `/opt/finalfootprint`
+- **New path:** `/opt/footprintupstox`
+- **Old repo:** `https://github.com/afaaqimran/finalfootprint.git`
+- **New repo:** `https://github.com/afaaqimran/workingfootprint.git`
+- All path references in service files, documentation, and scripts updated accordingly
+
+---
+
+### Session 9 Updates (30 June 2026) — Options Footprint Dropdown Strike Label Fix
+
+**Problem:** After an ATM shift, the dropdown strike prices and the chart title labels (Strike: XXXXX under CE/PE charts) no longer corresponded to the actual strike selected. For example, selecting offset -100 might show 24400 in the dropdown but the chart title showed 24500 (or vice versa).
+
+**Root Cause — three bugs in `loadOfpHistory()` (frontend):**
+
+**Bug 1 (main):** `ofpAtmStrike` was being set to `result.locked_strike`, which is the *selected* strike (`atm + offset`), not the raw ATM. So when offset was -100 and ATM was 24500, `ofpAtmStrike` became 24400. `populateStrikeDropdown()` then built all 7 dropdown labels relative to 24400 instead of 24500 — every option was off by -100.
+
+**Bug 2:** The strike title under each chart (`ofp-ce-strike`, `ofp-pe-strike`) was always written as `result.locked_strike` (the raw selected strike), overwriting the correct offset-aware value that `switchOfpStrike()` had previously set.
+
+**Bug 3:** When ATM shifted and `populateStrikeDropdown()` was re-called, it reset `selectEl.value = '0'`, losing the user's current selection.
+
+**Fixes:**
+
+**Backend (`footprint_web_app_upstox.py` → `/api/options-footprint-data`):**
+- Added `atm_strike: upstox.atm_fp_strike` to the API response — the true current ATM, separate from `locked_strike` (the selected strike)
+
+**Frontend (`templates/chart.html` → `loadOfpHistory()`):**
+- `ofpAtmStrike` is now set from `result.atm_strike` (true ATM), falling back to `result.locked_strike` only if `atm_strike` is absent
+- `prevAtm` is captured before overwriting `ofpAtmStrike` so the ATM-shift comparison is correct
+- Chart title strike is now calculated as `trueAtm + parseInt(ofpCurrentOffset)` instead of blindly using `result.locked_strike`
+- ATM shift detection: if `trueAtm !== prevAtm`, `populateStrikeDropdown()` is called again to update labels
+
+**Frontend (`templates/chart.html` → `populateStrikeDropdown()`):**
+- Saves `previousOffset` before clearing the dropdown
+- After rebuilding options, restores `selectEl.value` to `previousOffset` (only defaults to `'0'` on the very first populate)
+- Removed per-option `console.log` noise
+
+---
+
+### Session 10 Updates (1 July 2026) — Per-Strike DB Storage + Port / Service Name Fix
+
+#### 1. Port Corrected to 5001
+- App has always run on port **5001** (bound in gunicorn command)
+- `APP_CONTEXT.md` previously documented port 5002 incorrectly — all references updated
+- Correct URL: `http://65.20.75.231:5001`
+
+#### 2. Service Name Corrected to `footprint.service`
+- Active systemd service is `footprint.service` (not `finalfootprint.service`)
+- All `systemctl` commands and `journalctl` references in docs updated accordingly
+
+#### 3. Options Footprint — Per-Strike DB Storage (Option 3)
+
+**Problem:** When ATM shifted mid-session (e.g. 24500 → 24600), the CE chart showed a sudden price dip and the PE chart showed a sudden price spike. Root cause: data was stored under offset-based symbol keys (`NIFTY_CE_0`, `NIFTY_CE_-100`) — when ATM shifted, the offset-0 slot switched to a completely different instrument, causing a price discontinuity in the chart.
+
+**Fix — three-layer change:**
+
+**Backend (`footprint_web_app_upstox.py`):**
+
+1. **`subscribe_options_strikes()`** — state tracking dicts (`ofp_strike_candles`, `ofp_strike_volumes`, etc.) now keyed by actual strike: `NIFTY_CE_24500` instead of `NIFTY_CE_0`. On ATM shift, previously-tracked strikes preserve their state; only new (freshly-entered-range) strikes are initialised.
+
+2. **`_process_all_strike_footprints()`** — added `strike` parameter. Symbol key is now `NIFTY_CE_{actual_strike}` (e.g. `NIFTY_CE_24500`). The Socket.IO payload now includes `'strike': int(strike)` alongside the existing `'offset'` field.
+
+3. **`/api/options-footprint-data`** — resolves `actual_strike = atm_fp_strike + int(offset)` and queries DB using `NIFTY_{type}_{actual_strike}`. Returns `'strike': actual_strike` in the response.
+
+**Frontend (`templates/chart.html`):**
+
+4. **New variable `ofpCurrentStrike`** — tracks the actual strike number currently displayed (e.g. `24500`), separate from `ofpCurrentOffset`.
+
+5. **`loadOfpHistory()`** — sets `ofpCurrentStrike` from `result.strike` after each history load.
+
+6. **`switchOfpStrike()`** — updates `ofpCurrentStrike` immediately when user changes the dropdown (before history load returns), so live ticks are filtered correctly from the first tick after the switch.
+
+7. **`ofpHandleLiveTick()`** — now filters by `data.strike === ofpCurrentStrike` instead of `data.offset === ofpCurrentOffset`. Includes a safe fallback to offset-based filtering for any tick that lacks the `strike` field.
+
+**Result:** Each strike (24400, 24500, 24600 CE/PE etc.) has its own clean, continuous price and footprint history. An ATM shift from 24500→24600 no longer affects the chart for 24500 CE/PE — those candles continue uninterrupted. The ATM offset (offset=0) now shows the new 24600 CE/PE starting fresh from that point.
+
+---
+
+*Last updated: 1 July 2026 (session 10)*

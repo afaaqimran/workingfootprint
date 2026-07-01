@@ -631,6 +631,9 @@ class UpstoxAPI:
         threading.Thread(target=self.subscribe_options_strikes, daemon=True).start()
         # Start ATM monitor — re-subscribes when spot moves by 1 strike
         threading.Thread(target=self._atm_monitor, daemon=True).start()
+        # Start futures feed watchdog — re-subscribes if futures token goes silent
+        self._last_futures_tick = time.time()
+        threading.Thread(target=self._futures_watchdog, daemon=True).start()
 
     def subscribe_options_strikes(self, nifty_ltp=None):
         """
@@ -729,13 +732,18 @@ class UpstoxAPI:
                     if ikey:
                         new_keys.add(ikey)
                         
-                        # Initialize tracking for this strike/type
-                        symbol = f'NIFTY_{opt_type}_{offset}'
-                        self.ofp_strike_candles[symbol] = None
-                        self.ofp_strike_volumes[symbol] = 0
-                        self.ofp_strike_close[symbol] = 0
-                        self.ofp_strike_category[symbol] = 'buy'
-                        self.ofp_strike_fp_proc[symbol] = FootprintProcessor()
+                        # Initialize tracking keyed by ACTUAL STRIKE (not offset).
+                        # e.g. NIFTY_CE_24500 instead of NIFTY_CE_0.
+                        # This ensures each strike has its own continuous price history
+                        # even when ATM shifts and the same offset now points to a different strike.
+                        symbol = f'NIFTY_{opt_type}_{int(strike)}'
+                        if symbol not in self.ofp_strike_candles:
+                            # Only initialise NEW strikes; preserve state for strikes already tracking
+                            self.ofp_strike_candles[symbol] = None
+                            self.ofp_strike_volumes[symbol] = 0
+                            self.ofp_strike_close[symbol] = 0
+                            self.ofp_strike_category[symbol] = 'buy'
+                            self.ofp_strike_fp_proc[symbol] = FootprintProcessor()
 
             # Unsubscribe old option keys if they changed
             if self.options_instrument_keys and self.options_instrument_keys != new_keys:
@@ -748,7 +756,7 @@ class UpstoxAPI:
             self.options_instrument_keys = new_keys
 
             if new_keys and self.ws_client:
-                self.ws_client.subscribe(new_keys, mode="full")
+                self.ws_client.subscribe(new_keys | {self.instrument_token}, mode="full")
                 print(f"📡 Subscribed {len(new_keys)} NIFTY option strikes (ATM={atm_strike}, expiry={nearest_expiry}, 100-pt increments)")
 
                 # Lock the ATM for the options footprint chart on FIRST subscription only.
@@ -810,6 +818,21 @@ class UpstoxAPI:
         except Exception as e:
             print(f"❌ Error subscribing options strikes: {e}")
 
+    def _futures_watchdog(self):
+        """Re-subscribe futures token if no tick received for 3 minutes (silent drop)"""
+        TIMEOUT = 180  # seconds
+        CHECK_INTERVAL = 60
+        time.sleep(60)  # grace period after startup
+        while True:
+            time.sleep(CHECK_INTERVAL)
+            if not self.ws_client:
+                continue
+            silence = time.time() - getattr(self, '_last_futures_tick', time.time())
+            if silence > TIMEOUT:
+                logger.warning(f"⚠️ Futures token {self.instrument_token} silent for {int(silence)}s — re-subscribing")
+                self.ws_client.subscribe({self.instrument_token}, mode="full")
+                self._last_futures_tick = time.time()
+
     def _atm_monitor(self):
         """Re-subscribe options whenever ATM strike shifts by 100 pts or expiry rolls over"""
         last_atm = None
@@ -839,12 +862,12 @@ class UpstoxAPI:
                 current_atm = round(spot / STRIKE_STEP) * STRIKE_STEP
                 now = time.time()
                 
-                # Skip option subscription during pre-open (before 09:15)
+                # Skip option subscription during pre-open (before 09:15 IST)
                 # Pre-open trades can give incorrect ATM calculation; wait for actual market open
-                current_time = datetime.now().time()
-                if current_time.hour == MARKET_OPEN_HOUR and current_time.minute < MARKET_OPEN_MIN:
+                current_time_ist = (datetime.utcnow() + __import__('datetime').timedelta(hours=5, minutes=30)).time()
+                if current_time_ist.hour == MARKET_OPEN_HOUR and current_time_ist.minute < MARKET_OPEN_MIN:
                     if last_atm is None:
-                        print(f"⏰ Pre-open detected ({current_time.strftime('%H:%M')}), waiting for market open at 09:15...")
+                        print(f"⏰ Pre-open detected ({current_time_ist.strftime('%H:%M')} IST), waiting for market open at 09:15...")
                     continue
 
                 # Detect expiry rollover: if today is past the subscribed expiry, re-subscribe
@@ -987,16 +1010,18 @@ class UpstoxAPI:
         except Exception as e:
             print(f"❌ ATM options footprint error ({opt_type}): {e}")
 
-    def _process_all_strike_footprints(self, instrument_key, opt_type, offset, ltp, vtt, current_ts):
+    def _process_all_strike_footprints(self, instrument_key, opt_type, offset, strike, ltp, vtt, current_ts):
         """
         Process footprint for all 7 strikes (ATM±300, ±200, ±100, ATM) for both CE and PE.
-        Stores data in separate tables per strike.
+        Stores data keyed by ACTUAL STRIKE PRICE (e.g. NIFTY_CE_24500) so that each strike
+        has its own continuous history and ATM shifts never cause a price discontinuity.
         Used to track all 14 strike/type combinations irrespective of user UI selection.
         """
         try:
             timeframe_ms = 60000  # always 1-min
             candle_ts = int(current_ts // timeframe_ms) * timeframe_ms
-            symbol = f'NIFTY_{opt_type}_{offset}'  # e.g., NIFTY_CE_-300, NIFTY_PE_0, NIFTY_CE_100
+            # Key by actual strike price — not offset — so history is per-instrument not per-role
+            symbol = f'NIFTY_{opt_type}_{int(strike)}'  # e.g., NIFTY_CE_24500, NIFTY_PE_24400
 
             # Get or initialize candle state for this strike/type
             if symbol not in self.ofp_strike_candles:
@@ -1046,7 +1071,8 @@ class UpstoxAPI:
             base_update = {
                 'symbol':    symbol,
                 'opt_type':  opt_type,
-                'offset':    offset,  # Track offset for filtering
+                'offset':    offset,   # Relative offset (0, ±100, ±200, ±300) — for UI routing
+                'strike':    int(strike),  # Actual strike price — for precise per-instrument filtering
                 'timestamp': int(current_candle['ts']),
                 'open':      current_candle['open'],
                 'high':      current_candle['high'],
@@ -1085,6 +1111,16 @@ class UpstoxAPI:
             feeds = data.get('feeds', {})
             current_ts = int(data.get('currentTs', time.time() * 1000))
             
+            # Log received instrument keys periodically for diagnostics
+            if not hasattr(self, '_last_feed_log') or (time.time() - self._last_feed_log) > 60:
+                logger.info(f"📊 Receiving feeds for {len(feeds)} instruments: {list(feeds.keys())[:5]}")
+                logger.info(f"📌 Expected futures token: {self.instrument_token} ({self.current_symbol})")
+                self._last_feed_log = time.time()
+
+            # Track last time the futures token was seen in feed
+            if self.instrument_token in feeds:
+                self._last_futures_tick = time.time()
+
             for instrument_key, feed_data in feeds.items():
                 # ── NIFTY spot index LTP ─────────────────────────────
                 if instrument_key == 'NSE_INDEX|Nifty 50':
@@ -1145,7 +1181,7 @@ class UpstoxAPI:
                         
                         # ── All-Strike Options Footprint (handles all 7 strikes for both CE/PE) ────────
                         # This processes footprint for all 7 strikes irrespective of UI selection
-                        # Data is emitted with correct offset, allowing frontend to switch between strikes
+                        # Data is emitted with correct offset AND strike, allowing frontend to switch between strikes
                         for meta in self.options_meta:
                             if meta.get('instrument_key') == instrument_key and ltp_val > 0:
                                 offset = meta.get('offset', 0)
@@ -1153,6 +1189,7 @@ class UpstoxAPI:
                                     instrument_key=instrument_key,
                                     opt_type=meta['type'],
                                     offset=offset,
+                                    strike=meta['strike'],   # actual strike price for DB keying
                                     ltp=ltp_val,
                                     vtt=int(full.get('vtt', 0) or 0),
                                     current_ts=current_ts
@@ -1176,13 +1213,18 @@ class UpstoxAPI:
                     # Log token mismatch for diagnostics (throttled to avoid spam)
                     if not hasattr(self, '_last_token_mismatch_log') or \
                        (time.time() - self._last_token_mismatch_log) > 60:  # Log once per minute
-                        print(f"⚠️ Instrument token mismatch: received={instrument_key}, "
+                        logger.warning(f"⚠️ Futures token mismatch: received={instrument_key}, "
                               f"expected={self.instrument_token} ({self.current_symbol})")
                         self._last_token_mismatch_log = time.time()
                     continue
                     
                 full_feed = feed_data.get('fullFeed', {}).get('marketFF', {})
                 if not full_feed:
+                    # Log when futures feed has no marketFF data
+                    if not hasattr(self, '_last_no_feed_log') or \
+                       (time.time() - self._last_no_feed_log) > 300:  # Log once per 5 min
+                        logger.warning(f"⚠️ No fullFeed.marketFF for {instrument_key}, feed_data keys: {list(feed_data.keys())}")
+                        self._last_no_feed_log = time.time()
                     continue
                 
                 # Extract Data
@@ -1258,12 +1300,18 @@ class UpstoxAPI:
                 if candle_timestamp > current_time_ms + (60 * 60 * 1000):
                     candle_timestamp = current_time_ms
                 
-                # Skip pre-open period (before 09:15) for futures candles
+                # Skip pre-open period (before 09:15 IST) for futures candles
                 # Pre-open trades should not be included in the main chart
-                candle_dt = datetime.fromtimestamp(candle_timestamp / 1000)
-                if candle_dt.hour == 9 and candle_dt.minute < 15:
+                candle_dt_ist = datetime.utcfromtimestamp(candle_timestamp / 1000) + __import__('datetime').timedelta(hours=5, minutes=30)
+                if candle_dt_ist.hour == 9 and candle_dt_ist.minute < 15:
                     # Pre-open period — skip storing and emitting this candle
                     return
+                
+                # Log successful futures candle processing periodically
+                if not hasattr(self, '_last_candle_log') or \
+                   (time.time() - self._last_candle_log) > 120:  # Log once per 2 min
+                    logger.info(f"✅ Processing futures candle: {instrument_key} LTP={ltp} VTT={vtt}")
+                    self._last_candle_log = time.time()
 
                 base_update = {
                     'symbol': self.current_symbol,
@@ -1294,10 +1342,10 @@ class UpstoxAPI:
                 self.prev_close = current_ohlc.get('close', ltp)
                 
         except Exception as e:
-            print(f"❌ Error processing WS data: {e}")
+            logger.error(f"❌ Error processing WS data: {e}", exc_info=True)
 
     def on_ws_error(self, error):
-        print(f"❌ WebSocket Error Callback: {error}")
+        logger.error(f"❌ WebSocket Error Callback: {error}")
 
 @app.route('/favicon.ico')
 def favicon():
@@ -1322,6 +1370,7 @@ def login():
         if existing and existing.ws_client:
             existing.ws_client.disconnect()
         authenticated_users[user_id] = upstox
+        logger.info(f"✅ User {user_id} logged in. Default instrument: {upstox.current_symbol} ({upstox.instrument_token})")
         upstox.start_data_polling(user_id, '3')
         return jsonify(result)
 
@@ -1436,6 +1485,8 @@ def change_instrument():
     user_id = session['user_id']
     upstox = authenticated_users[user_id]
     
+    logger.info(f"🔄 Changing instrument: {upstox.current_symbol} ({upstox.instrument_token}) → {symbol} ({instrument_token})")
+    
     try:
         # Update instrument token and symbol
         upstox.instrument_token = instrument_token
@@ -1447,11 +1498,11 @@ def change_instrument():
             new_lot_size = int(lot_size)
             if new_lot_size > 0:
                 upstox.footprint_processor.lot_size = new_lot_size
-                print(f"✅ Updated lot size to {new_lot_size} for {symbol}")
+                logger.info(f"✅ Updated lot size to {new_lot_size} for {symbol}")
             else:
-                print(f"⚠️ Invalid lot size {lot_size}, keeping {upstox.footprint_processor.lot_size}")
+                logger.warning(f"⚠️ Invalid lot size {lot_size}, keeping {upstox.footprint_processor.lot_size}")
         except Exception as e:
-            print(f"❌ Error updating lot size: {e}")
+            logger.error(f"❌ Error updating lot size: {e}")
             
         # Reset volume tracking and candle state for new instrument
         upstox.prev_volume = 0
@@ -1462,7 +1513,10 @@ def change_instrument():
         
         # Subscribe to new instrument
         if upstox.ws_client:
+            ws_connected = upstox.ws_client.ws and upstox.ws_client.ws.sock and upstox.ws_client.ws.sock.connected
+            logger.info(f"📡 WS connected={ws_connected}, subscribed_instruments={upstox.ws_client.subscribed_instruments}")
             upstox.ws_client.subscribe({instrument_token}, mode="full")
+            logger.info(f"✅ Subscribed to new futures token: {instrument_token}")
 
         # Re-subscribe options strikes for new instrument context
         threading.Thread(target=upstox.subscribe_options_strikes, daemon=True).start()
@@ -1907,9 +1961,12 @@ def get_option_chain_full():
 @app.route('/api/options-footprint-data')
 def get_options_footprint_data():
     """
-    Return stored CE/PE footprint candle data from footprint_data_OPTIONS_ATM.db
-    Supports fetching for any strike offset: ATM, ATM±100, ATM±200, ATM±300
-    If no offset specified, defaults to current day data only
+    Return stored CE/PE footprint candle data from footprint_data_OPTIONS_ATM.db.
+    Data is keyed by actual strike price (e.g. NIFTY_CE_24500) so each strike
+    has its own clean, continuous history regardless of ATM shifts.
+
+    Supports fetching for any strike offset: ATM, ATM±100, ATM±200, ATM±300.
+    The actual strike is resolved as: atm_fp_strike + offset.
     """
     if 'user_id' not in session or session['user_id'] not in authenticated_users:
         return jsonify({'success': False}), 401
@@ -1919,28 +1976,35 @@ def get_options_footprint_data():
     opt_type = request.args.get('type', 'CE').upper()   # 'CE' or 'PE'
     offset = request.args.get('offset', '0')             # '0', '-100', '+100', '-200', '+200', '-300', '+300'
     days = int(request.args.get('days', 1))              # Default to current day only
-    
+
     try:
-        # Build symbol based on offset
-        # Symbol format: NIFTY_CE_0, NIFTY_CE_-100, NIFTY_CE_100, etc.
-        symbol = f'NIFTY_{opt_type}_{offset}'
-        
+        # Resolve actual strike from current ATM + offset
+        # This is the key change: symbol is now NIFTY_CE_24500 not NIFTY_CE_0
+        atm = upstox.atm_fp_strike
+        if atm is None:
+            return jsonify({'success': False, 'message': 'ATM not yet determined — please retry'}), 503
+
+        actual_strike = int(atm) + int(offset)
+        symbol = f'NIFTY_{opt_type}_{actual_strike}'  # e.g. NIFTY_CE_24500
+
         # If requesting current day only (days=1), clear old data from previous sessions
         if days == 1:
             data_storage.clear_old_session_data(symbol, timeframe='1')
-        
+
         # Fetch data from database
         raw_data = data_storage.get_stored_data(symbol, timeframe='1', days=days)
-        
+
         return jsonify({
-            'success':      True,
-            'data':         raw_data,
-            'count':        len(raw_data),
-            'opt_type':     opt_type,
-            'offset':       offset,
-            'locked_strike': upstox.ofp_selected_strike,  # What user is currently viewing
-            'locked_expiry': upstox.atm_fp_expiry,
-            'is_out_of_range': upstox.ofp_is_out_of_range,  # Flag: user should be notified
+            'success':        True,
+            'data':           raw_data,
+            'count':          len(raw_data),
+            'opt_type':       opt_type,
+            'offset':         offset,
+            'strike':         actual_strike,             # Actual strike price being viewed
+            'locked_strike':  upstox.ofp_selected_strike,  # What user is currently viewing
+            'atm_strike':     upstox.atm_fp_strike,         # True current ATM (used for dropdown labels)
+            'locked_expiry':  upstox.atm_fp_expiry,
+            'is_out_of_range': upstox.ofp_is_out_of_range,
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
