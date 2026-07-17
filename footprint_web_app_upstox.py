@@ -2,6 +2,8 @@ import eventlet
 eventlet.monkey_patch()
 
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask_wtf.csrf import CSRFProtect
+from dotenv import load_dotenv
 import requests
 import json
 import os
@@ -13,6 +15,9 @@ import sqlite3
 from instrument_manager import InstrumentManager
 from upstox_websocket_v3 import UpstoxWebSocketV3
 from log_manager import initialize_logging, get_logger
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Footprint Processing Logic
 class FootprintProcessor:
@@ -287,7 +292,7 @@ class DataStorage:
         conn.commit()
         conn.close()
         self.initialized_dbs.add(target_db)
-        print(f"✅ Database initialized: {target_db}")
+        logger.info(f"✅ Database initialized: {target_db}")
     
     def cleanup_old_data(self):
         """Remove data older than 180 days from all DBs"""
@@ -312,7 +317,7 @@ class DataStorage:
             conn.close()
             
             if deleted_candles > 0 or deleted_levels > 0:
-                print(f"🧹 Cleaned up old data: {deleted_candles} candles, {deleted_levels} footprint levels")
+                logger.info(f"🧹 Cleaned up old data: {deleted_candles} candles, {deleted_levels} footprint levels")
     
     def store_candle(self, candle_data, timeframe='1'):
         """Store candle and footprint data"""
@@ -362,7 +367,7 @@ class DataStorage:
             conn.close()
             
         except Exception as e:
-            print(f"Error storing candle: {e}")
+            logger.error(f"Error storing candle: {e}")
     
     def get_stored_data(self, symbol, timeframe='1', days=180):
         """Retrieve stored data for last N days. Always returns 1-minute candles."""
@@ -432,7 +437,7 @@ class DataStorage:
             return result
             
         except Exception as e:
-            print(f"Error retrieving stored data: {e}")
+            logger.error(f"Error retrieving stored data: {e}")
             return []
     
     def clear_old_session_data(self, symbol, timeframe='1'):
@@ -467,26 +472,87 @@ class DataStorage:
             conn.close()
             
             if deleted_count > 0:
-                print(f"🧹 Cleared {deleted_count} old candles from {symbol}")
-            
+                logger.info(f"🧹 Cleared {deleted_count} old candles from {symbol}")
+
             return True
-            
+
         except Exception as e:
-            print(f"Error clearing old data for {symbol}: {e}")
+            logger.error(f"Error clearing old data for {symbol}: {e}")
             return False
 
+
+# ========== INPUT VALIDATION FUNCTIONS ==========
+def validate_symbol(symbol):
+    """Validate symbol input to prevent injection attacks"""
+    if not symbol:
+        return False
+    # Allow only alphanumeric, dash, and underscore; max 50 chars
+    import re
+    if len(symbol) > 50:
+        return False
+    if not re.match(r'^[a-zA-Z0-9_\-|]*$', symbol):
+        return False
+    return True
+
+
+def validate_timeframe(timeframe):
+    """Validate timeframe to only allow whitelisted values"""
+    valid_timeframes = {'1', '3', '5', '15', '30', '60'}
+    return str(timeframe) in valid_timeframes
+
+
+def validate_days(days):
+    """Validate days parameter"""
+    try:
+        days_int = int(days)
+        return 1 <= days_int <= 365
+    except (ValueError, TypeError):
+        return False
+
+
+# ========== FLASK APP CONFIGURATION ==========
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-change-this'
-socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, ping_interval=25, async_mode='eventlet')
+
+# ========== SECURITY CONFIGURATION ==========
+# 1. Flask Secret Key (from environment variable)
+app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-key-' + os.urandom(16).hex())
+if app.secret_key == 'dev-key-' + os.urandom(16).hex():
+    # If not set, generate random (ephemeral - lost on restart)
+    app.secret_key = 'dev-key-' + os.urandom(16).hex()
+
+# 2. Session Cookie Security
+app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevent XSS access to session cookie
+app.config['SESSION_COOKIE_SECURE'] = os.getenv('SECURE_SESSION_COOKIE', 'false').lower() == 'true'  # HTTPS only in production
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF protection
+
+# 3. CSRF Protection
+app.config['WTF_CSRF_ENABLED'] = True
+app.config['WTF_CSRF_TIME_LIMIT'] = None  # No time limit for API tokens
+csrf = CSRFProtect(app)
+
+# 4. CORS Configuration (from environment variable)
+cors_origins = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:5001')
+cors_origins_list = [origin.strip() for origin in cors_origins.split(',')]
+socketio = SocketIO(app, cors_allowed_origins=cors_origins_list, ping_timeout=60, ping_interval=25, async_mode='eventlet')
 
 # Initialize logging system with 5-day retention
 logger = initialize_logging(log_dir='logs', retention_days=5)
 logger.info("=" * 80)
 logger.info("🚀 Footprint Application Started")
 logger.info("=" * 80)
+logger.info(f"🔒 Flask environment: {os.getenv('FLASK_ENV', 'development')}")
+logger.info(f"🔒 CORS allowed origins: {cors_origins_list}")
+logger.info(f"🔒 Session cookie secure: {app.config['SESSION_COOKIE_SECURE']}")
 
+# ========== API TOKEN CONFIGURATION ==========
 # Analytics token (1-year validity, read-only, no OAuth redirect needed)
-ANALYTICS_TOKEN = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiJBVjYwMDEiLCJqdGkiOiI2OWJlNzhiZTg3YTgwYjEzMWJkZTg0MWMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlzRXh0ZW5kZWQiOnRydWUsImlhdCI6MTc3NDA5MDQzMCwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxODA1NjY2NDAwfQ.edEAi8hh4gU63ceOAK_Kqfww786nI0zO8LP-7kLm9pQ"
+# Load from environment variable - NEVER log or print the token
+ANALYTICS_TOKEN = os.getenv('UPSTOX_ANALYTICS_TOKEN')
+if not ANALYTICS_TOKEN:
+    logger.error("❌ CRITICAL: UPSTOX_ANALYTICS_TOKEN not set in environment. Application cannot start.")
+    logger.error("Please set the UPSTOX_ANALYTICS_TOKEN environment variable in your .env file")
+    raise ValueError("UPSTOX_ANALYTICS_TOKEN environment variable is required")
+logger.info("✅ Analytics token loaded from environment variable")
 
 # Global variables
 authenticated_users = {}
@@ -568,13 +634,13 @@ class UpstoxAPI:
             if nifty_contracts:
                 self.instrument_token = nifty_contracts[0]['instrument_key']
                 self.current_symbol = nifty_contracts[0]['symbol']
-                print(f"✅ Default instrument: {nifty_contracts[0]['display_name']} ({self.instrument_token})")
+                logger.info(f" Default instrument: {nifty_contracts[0]['display_name']} ({self.instrument_token})")
             else:
                 self.instrument_token = "NSE_FO|37054"
-                print(f"⚠️ Using fallback instrument token: {self.instrument_token}")
+                logger.info(f"⚠️ Using fallback instrument token: {self.instrument_token}")
         except Exception as e:
             self.instrument_token = "NSE_FO|37054"
-            print(f"⚠️ Error getting default instrument: {e}, using fallback")
+            logger.info(f"⚠️ Error getting default instrument: {e}, using fallback")
         
         self.current_timeframe = '3'
         self.user_id = None
@@ -587,20 +653,40 @@ class UpstoxAPI:
             self.access_token = ANALYTICS_TOKEN
             # Verify token works against market data feed authorize endpoint
             headers = {'Authorization': f'Bearer {self.access_token}', 'Accept': 'application/json'}
-            response = requests.get(f"{self.base_url}/v3/feed/market-data-feed/authorize", headers=headers)
+            logger.info(f"🔑 Verifying analytics token with Upstox API...")
+            response = requests.get(f"{self.base_url}/v3/feed/market-data-feed/authorize", headers=headers, timeout=10)
+            logger.info(f"🔑 Auth response: {response.status_code}")
+
             if response.status_code == 200:
-                self.logged_in = True
-                # Check analytics token expiry (expires 21 Mar 2027)
-                expiry = datetime(2027, 3, 21)
-                days_left = (expiry - datetime.now()).days
-                warning = None
-                if days_left <= 10:
-                    warning = f'⚠️ Analytics token expires in {days_left} day(s) on 21 Mar 2027. Please regenerate it.'
-                return {'success': True, 'message': 'Login successful', 'warning': warning}
+                try:
+                    data = response.json()
+                    if data.get('status') == 'success':
+                        self.logged_in = True
+                        logger.info(f"✅ Token verification successful")
+                        # Check analytics token expiry (expires 21 Mar 2027)
+                        expiry = datetime(2027, 3, 21)
+                        days_left = (expiry - datetime.now()).days
+                        warning = None
+                        if days_left <= 10:
+                            warning = f'⚠️ Analytics token expires in {days_left} day(s) on 21 Mar 2027. Please regenerate it.'
+                        return {'success': True, 'message': 'Login successful', 'warning': warning}
+                    else:
+                        logger.error(f"❌ Token verification returned non-success status: {data}")
+                        return {'success': False, 'message': 'Token verification failed'}
+                except Exception as json_error:
+                    logger.error(f"❌ Failed to parse response: {json_error}")
+                    logger.error(f"❌ Response text: {response.text[:500]}")
+                    return {'success': False, 'message': 'Invalid API response'}
             else:
-                return {'success': False, 'message': f'Token verification failed: {response.status_code}'}
+                logger.error(f"❌ Token verification failed with status {response.status_code}")
+                logger.error(f"❌ Response: {response.text[:200]}")
+                if response.status_code == 401:
+                    return {'success': False, 'message': 'Token expired or invalid. Please regenerate from: https://account.upstox.com/developer/apps#analytics'}
+                else:
+                    return {'success': False, 'message': f'Token verification failed: {response.status_code}'}
         except Exception as e:
-            return {'success': False, 'message': str(e)}
+            logger.error(f"❌ Login error: {e}")
+            return {'success': False, 'message': f'Login failed: {str(e)}'}
 
     def start_data_polling(self, user_id, timeframe='3'):
         """Start WebSocket connection instead of polling"""
@@ -610,7 +696,7 @@ class UpstoxAPI:
         if self.ws_client:
             self.ws_client.disconnect()
             
-        print(f"🔄 Starting WebSocket for {user_id}...")
+        logger.info(f" Starting WebSocket for {user_id}...")
         self.ws_client = UpstoxWebSocketV3(
             access_token=self.access_token,
             on_data_callback=self.process_websocket_data,
@@ -625,7 +711,7 @@ class UpstoxAPI:
         self.ws_client.subscribe({'NSE_INDEX|Nifty 50'}, mode="ltpc")
         # Also subscribe India VIX for the time-based analysis tab
         self.ws_client.subscribe({'NSE_INDEX|India VIX'}, mode="ltpc")
-        print("📡 Started Upstox WebSocket V3")
+        logger.info("📡 Started Upstox WebSocket V3")
 
         # Subscribe NIFTY options strikes in background
         threading.Thread(target=self.subscribe_options_strikes, daemon=True).start()
@@ -651,7 +737,7 @@ class UpstoxAPI:
                         break
                     time.sleep(0.5)
                 if self.nifty_spot_ltp == 0:
-                    print("⚠️ NIFTY spot not yet available, falling back to futures LTP")
+                    logger.info("⚠️ NIFTY spot not yet available, falling back to futures LTP")
             if not instrument_manager.instruments:
                 instrument_manager.load_cached_instruments()
 
@@ -682,7 +768,7 @@ class UpstoxAPI:
                     continue
 
             if not valid_options:
-                print("⚠️ No valid NIFTY options found for subscription")
+                logger.info("⚠️ No valid NIFTY options found for subscription")
                 return
 
             nearest_expiry = min(o['expiry_date'] for o in valid_options)
@@ -757,7 +843,7 @@ class UpstoxAPI:
 
             if new_keys and self.ws_client:
                 self.ws_client.subscribe(new_keys | {self.instrument_token}, mode="full")
-                print(f"📡 Subscribed {len(new_keys)} NIFTY option strikes (ATM={atm_strike}, expiry={nearest_expiry}, 100-pt increments)")
+                logger.info(f" Subscribed {len(new_keys)} NIFTY option strikes (ATM={atm_strike}, expiry={nearest_expiry}, 100-pt increments)")
 
                 # Lock the ATM for the options footprint chart on FIRST subscription only.
                 # Do NOT change the locked strike when ATM shifts — instead, track what strike
@@ -776,8 +862,8 @@ class UpstoxAPI:
                     self.ofp_selected_pe_key = pe_key
                     self.ofp_is_out_of_range = False
                     
-                    print(f"🔒 Locked ATM footprint strike: {atm_strike} | CE={ce_key} | PE={pe_key}")
-                    print(f"👁️  User viewing strike: {self.ofp_selected_strike}")
+                    logger.info(f" Locked ATM footprint strike: {atm_strike} | CE={ce_key} | PE={pe_key}")
+                    logger.info(f"  User viewing strike: {self.ofp_selected_strike}")
                 elif self.atm_fp_strike != atm_strike:
                     # ATM has shifted — check if user's currently selected strike is still in range
                     # New subscription range: atm_strike ± 300/200/100/0 (7 strikes)
@@ -785,7 +871,7 @@ class UpstoxAPI:
                     
                     if self.ofp_selected_strike in new_range:
                         # Selected strike is still in range — keep showing it
-                        print(f"🔄 ATM shifted {self.atm_fp_strike} → {atm_strike}, but selected {self.ofp_selected_strike} still in range")
+                        logger.info(f" ATM shifted {self.atm_fp_strike} → {atm_strike}, but selected {self.ofp_selected_strike} still in range")
                         self.ofp_is_out_of_range = False
                         # Find updated keys for the selected strike (may have changed instruments)
                         ce_key = opt_lookup.get((float(self.ofp_selected_strike), 'CE'))
@@ -795,8 +881,8 @@ class UpstoxAPI:
                             self.ofp_selected_pe_key = pe_key
                     else:
                         # Selected strike is OUT of range — auto-switch to new ATM
-                        print(f"⚠️  ATM shifted {self.atm_fp_strike} → {atm_strike}, selected {self.ofp_selected_strike} OUT OF RANGE")
-                        print(f"    Auto-switching chart to new ATM: {atm_strike}")
+                        logger.warning(f"⚠️  ATM shifted {self.atm_fp_strike} → {atm_strike}, selected {self.ofp_selected_strike} OUT OF RANGE")
+                        logger.info(f"    Auto-switching chart to new ATM: {atm_strike}")
                         self.ofp_selected_strike = atm_strike
                         self.ofp_is_out_of_range = True
                         ce_key = opt_lookup.get((float(atm_strike), 'CE'))
@@ -816,7 +902,7 @@ class UpstoxAPI:
                 self.atm_pe_prev_ltp = 0
 
         except Exception as e:
-            print(f"❌ Error subscribing options strikes: {e}")
+            logger.error(f"❌ Error subscribing options strikes: {e}")
 
     def _futures_watchdog(self):
         """Re-subscribe futures token if no tick received for 3 minutes (silent drop)"""
@@ -850,7 +936,7 @@ class UpstoxAPI:
                 break
             time.sleep(1)
         if self.nifty_spot_ltp <= 0:
-            print("⚠️ ATM monitor: NIFTY spot not available after 30s, will retry in loop")
+            logger.info("⚠️ ATM monitor: NIFTY spot not available after 30s, will retry in loop")
 
         while True:
             try:
@@ -867,7 +953,7 @@ class UpstoxAPI:
                 current_time_ist = (datetime.utcnow() + __import__('datetime').timedelta(hours=5, minutes=30)).time()
                 if current_time_ist.hour == MARKET_OPEN_HOUR and current_time_ist.minute < MARKET_OPEN_MIN:
                     if last_atm is None:
-                        print(f"⏰ Pre-open detected ({current_time_ist.strftime('%H:%M')} IST), waiting for market open at 09:15...")
+                        logger.warning(f"⏰ Pre-open detected ({current_time_ist.strftime('%H:%M')} IST), waiting for market open at 09:15...")
                     continue
 
                 # Detect expiry rollover: if today is past the subscribed expiry, re-subscribe
@@ -880,7 +966,7 @@ class UpstoxAPI:
                             subscribed_expiry = datetime.strptime(subscribed_expiry_str, '%d %b %Y').date()
                             if datetime.now().date() > subscribed_expiry:
                                 if now - last_subscribe_time >= SUBSCRIBE_COOLDOWN:
-                                    print(f"🔄 Expiry {subscribed_expiry_str} has passed, rolling to next expiry...")
+                                    logger.info(f" Expiry {subscribed_expiry_str} has passed, rolling to next expiry...")
                                     self.subscribe_options_strikes(nifty_ltp=spot)
                                     last_atm = current_atm
                                     last_subscribe_time = now
@@ -891,7 +977,7 @@ class UpstoxAPI:
                 if last_atm is None:
                     if now - last_subscribe_time >= SUBSCRIBE_COOLDOWN:
                         last_atm = current_atm
-                        print(f"✅ Market open detected, subscribing to options strikes with ATM={current_atm}")
+                        logger.info(f" Market open detected, subscribing to options strikes with ATM={current_atm}")
                         self.subscribe_options_strikes(nifty_ltp=spot)
                         last_subscribe_time = now
                     continue
@@ -902,17 +988,17 @@ class UpstoxAPI:
                     if now - last_subscribe_time < SUBSCRIBE_COOLDOWN:
                         continue  # throttle — too soon since last subscription
                     if current_atm > last_atm and spot >= last_atm + (STRIKE_STEP / 2) + HYSTERESIS:
-                        print(f"🔄 ATM shifted {last_atm} → {current_atm} (spot={spot}), re-subscribing options...")
+                        logger.info(f" ATM shifted {last_atm} → {current_atm} (spot={spot}), re-subscribing options...")
                         self.subscribe_options_strikes(nifty_ltp=spot)
                         last_atm = current_atm
                         last_subscribe_time = now
                     elif current_atm < last_atm and spot <= last_atm - (STRIKE_STEP / 2) - HYSTERESIS:
-                        print(f"🔄 ATM shifted {last_atm} → {current_atm} (spot={spot}), re-subscribing options...")
+                        logger.info(f" ATM shifted {last_atm} → {current_atm} (spot={spot}), re-subscribing options...")
                         self.subscribe_options_strikes(nifty_ltp=spot)
                         last_atm = current_atm
                         last_subscribe_time = now
             except Exception as e:
-                print(f"❌ ATM monitor error: {e}")
+                logger.error(f"❌ ATM monitor error: {e}")
 
     def _process_atm_option_footprint(self, opt_type, ltp, vtt, current_ts):
         """
@@ -1008,7 +1094,7 @@ class UpstoxAPI:
                 self.atm_pe_prev_category = prev_category
 
         except Exception as e:
-            print(f"❌ ATM options footprint error ({opt_type}): {e}")
+            logger.error(f"❌ ATM options footprint error ({opt_type}): {e}")
 
     def _process_all_strike_footprints(self, instrument_key, opt_type, offset, strike, ltp, vtt, current_ts):
         """
@@ -1104,7 +1190,7 @@ class UpstoxAPI:
             self.ofp_strike_category[symbol] = prev_category
 
         except Exception as e:
-            print(f"❌ All-strike footprint error ({symbol}): {e}")
+            logger.error(f"❌ All-strike footprint error ({symbol}): {e}")
 
     def process_websocket_data(self, data):
         try:
@@ -1271,7 +1357,7 @@ class UpstoxAPI:
                 if self.prev_volume == 0:
                     self.prev_volume = vtt
                     volume_diff = 0
-                    print(f"📊 Initializing: LTP:{ltp} VTT:{vtt}")
+                    logger.debug(f"📊 Initializing: LTP:{ltp} VTT:{vtt}")
                 else:
                     volume_diff = max(0, vtt - self.prev_volume)
                     self.prev_volume = vtt
@@ -1347,6 +1433,25 @@ class UpstoxAPI:
     def on_ws_error(self, error):
         logger.error(f"❌ WebSocket Error Callback: {error}")
 
+# ========== ERROR HANDLERS ==========
+@app.errorhandler(404)
+def not_found(error):
+    """Handle 404 errors - return JSON for API, HTML for pages"""
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False, 'message': 'Not found'}), 404
+    return render_template('index.html' if request.path == '/' else 'chart.html'), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle 500 errors - always return JSON for API endpoints"""
+    logger.error(f"❌ 500 Internal Server Error: {error}", exc_info=True)
+    if request.path.startswith('/api/') or request.path.startswith('/login'):
+        return jsonify({
+            'success': False,
+            'message': 'Server error - please try again'
+        }), 500
+    return render_template('chart.html'), 500
+
 @app.route('/favicon.ico')
 def favicon():
     return '', 204
@@ -1358,23 +1463,43 @@ def index():
     return render_template('login_upstox.html')
 
 @app.route('/login', methods=['POST'])
+@csrf.exempt  # Exempt from CSRF - this is an automated login with no user input
 def login():
-    upstox = UpstoxAPI()
-    result = upstox.login()
+    """Handle user login - MUST always return JSON"""
+    try:
+        logger.info("📝 Login attempt...")
+        upstox = UpstoxAPI()
+        result = upstox.login()
 
-    if result['success']:
-        user_id = 'analytics_user'
-        session['user_id'] = user_id
-        # Disconnect existing WebSocket before replacing (Upstox allows only 1 concurrent connection)
-        existing = authenticated_users.get(user_id)
-        if existing and existing.ws_client:
-            existing.ws_client.disconnect()
-        authenticated_users[user_id] = upstox
-        logger.info(f"✅ User {user_id} logged in. Default instrument: {upstox.current_symbol} ({upstox.instrument_token})")
-        upstox.start_data_polling(user_id, '3')
-        return jsonify(result)
+        if result['success']:
+            user_id = 'analytics_user'
+            session['user_id'] = user_id
+            # Disconnect existing WebSocket before replacing (Upstox allows only 1 concurrent connection)
+            existing = authenticated_users.get(user_id)
+            if existing and existing.ws_client:
+                existing.ws_client.disconnect()
+            authenticated_users[user_id] = upstox
+            logger.info(f"✅ User {user_id} logged in. Default instrument: {upstox.current_symbol} ({upstox.instrument_token})")
 
-    return jsonify(result), 401
+            # Start WebSocket in background
+            try:
+                upstox.start_data_polling(user_id, '3')
+            except Exception as ws_error:
+                logger.error(f"⚠️ WebSocket startup error (non-fatal): {ws_error}")
+                # Continue anyway - WebSocket will retry
+
+            return jsonify(result)
+
+        logger.warning(f"❌ Login failed: {result.get('message', 'Unknown error')}")
+        return jsonify(result), 401
+
+    except Exception as e:
+        logger.error(f"❌ Login route error: {e}", exc_info=True)
+        # ALWAYS return JSON, never HTML error page
+        return jsonify({
+            'success': False,
+            'message': f'Login server error: {str(e)}'
+        }), 500
 
 @app.route('/api/current-user')
 def current_user():
@@ -1398,7 +1523,7 @@ def user_symbols():
             'message': f'Loaded {len(contracts)} active futures contracts'
         })
     except Exception as e:
-        print(f"Error getting contracts: {e}")
+        logger.info(f"Error getting contracts: {e}")
         # Fallback to static list if there's an error
         return jsonify({
             'success': True, 
@@ -1427,24 +1552,39 @@ def get_stored_data():
     # Get query parameters
     symbol = request.args.get('symbol', 'NIFTY_DEC')
     timeframe = request.args.get('timeframe', '1')
-    days = int(request.args.get('days', 180))
-    
+    days = request.args.get('days', '180')
+
+    # Input validation
+    if not validate_symbol(symbol):
+        logger.warning(f"⚠️  Invalid symbol provided: {symbol}")
+        return jsonify({'success': False, 'message': 'Invalid symbol'}), 400
+
+    if not validate_timeframe(timeframe):
+        logger.warning(f"⚠️  Invalid timeframe provided: {timeframe}")
+        return jsonify({'success': False, 'message': 'Invalid timeframe'}), 400
+
+    if not validate_days(days):
+        logger.warning(f"⚠️  Invalid days provided: {days}")
+        return jsonify({'success': False, 'message': 'Invalid days'}), 400
+
+    days = int(days)
+
     try:
         # 1. Always fetch 1-minute data from DB regardless of requested timeframe
         # This ensures we can resample from 1min to any other timeframe
         raw_data = data_storage.get_stored_data(symbol, timeframe='1', days=days)
-        print(f"🔍 Raw 1-minute data count: {len(raw_data)}")
+        logger.info(f"🔍 Raw 1-minute data count: {len(raw_data)}")
         if raw_data:
-            print(f"🔍 First raw item timestamp: {raw_data[0].get('timestamp')}")
-            print(f"🔍 Last raw item timestamp: {raw_data[-1].get('timestamp')}")
+            logger.info(f"🔍 First raw item timestamp: {raw_data[0].get('timestamp')}")
+            logger.info(f"🔍 Last raw item timestamp: {raw_data[-1].get('timestamp')}")
         
         # 2. Resample to requested timeframe if needed
         if timeframe != '1':
             stored_data = resample_data(raw_data, timeframe)
-            print(f"🔍 Resampled to {timeframe}min: {len(stored_data)} candles")
+            logger.info(f"🔍 Resampled to {timeframe}min: {len(stored_data)} candles")
         else:
             stored_data = raw_data
-            print(f"🔍 No resampling needed, using {len(stored_data)} 1-minute candles")
+            logger.info(f"🔍 No resampling needed, using {len(stored_data)} 1-minute candles")
             
         return jsonify({
             'success': True,
@@ -1452,36 +1592,45 @@ def get_stored_data():
             'count': len(stored_data)
         })
     except Exception as e:
-        print(f"❌ Error in get_stored_data: {e}")
+        logger.error(f"❌ Error in get_stored_data: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @socketio.on('connect')
 def handle_connect():
-    print("🚨 WEBSOCKET CONNECT ATTEMPT")
+    logger.info("🚨 WEBSOCKET CONNECT ATTEMPT")
     if 'user_id' in session:
         join_room(session['user_id'])
         user_id = session['user_id']
-        print(f"🚨 USER {user_id} AUTHENTICATED")
-        print(f"User {user_id} connected to WebSocket")
+        logger.info(f"🚨 USER {user_id} AUTHENTICATED")
+        logger.info(f"User {user_id} connected to WebSocket")
     else:
-        print("🚨 NO USER_ID IN SESSION")
+        logger.info("🚨 NO USER_ID IN SESSION")
 
 @socketio.on('disconnect')
 def handle_disconnect():
     if 'user_id' in session:
         leave_room(session['user_id'])
-        print(f"User {session['user_id']} disconnected from WebSocket")
+        logger.info(f"User {session['user_id']} disconnected from WebSocket")
 
 @app.route('/api/change-instrument', methods=['POST'])
 def change_instrument():
     if 'user_id' not in session or session['user_id'] not in authenticated_users:
         return jsonify({'error': 'Not authenticated'}), 401
-    
+
     data = request.json
     symbol = data.get('symbol', 'NIFTY_NOV')
     instrument_token = data.get('instrument_token', 'NSE_FO|50971')
     lot_size = data.get('lot_size', 65)  # Get lot size from request (NIFTY default = 65)
-    
+
+    # Input validation
+    if not validate_symbol(symbol):
+        logger.warning(f"⚠️  Invalid symbol provided: {symbol}")
+        return jsonify({'error': 'Invalid symbol'}), 400
+
+    if not validate_symbol(instrument_token):
+        logger.warning(f"⚠️  Invalid instrument token provided")
+        return jsonify({'error': 'Invalid instrument token'}), 400
+
     user_id = session['user_id']
     upstox = authenticated_users[user_id]
     
@@ -1658,7 +1807,7 @@ def get_options_chain():
                 sma8 = round(sum(closes[:8]) / 8, 2)
                 trigger2 = sma5 > sma8
         except Exception as e:
-            print(f"⚠️ Trigger2 SMA error: {e}")
+            logger.info(f"⚠️ Trigger2 SMA error: {e}")
 
         return jsonify({
             'success':    True,
@@ -1674,7 +1823,7 @@ def get_options_chain():
         })
 
     except Exception as e:
-        print(f"❌ Error in options-chain: {e}")
+        logger.error(f"❌ Error in options-chain: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
@@ -2106,11 +2255,11 @@ def get_tba_snapshot():
                 if raw is not None:
                     pcr = round(float(raw), 2)
                 else:
-                    print(f"⚠️ PCR API: unexpected response shape — {str(pcr_json)[:200]}")
+                    logger.info(f"⚠️ PCR API: unexpected response shape — {str(pcr_json)[:200]}")
             else:
-                print(f"⚠️ PCR API HTTP {pcr_resp.status_code}: {pcr_resp.text[:200]}")
+                logger.info(f"⚠️ PCR API HTTP {pcr_resp.status_code}: {pcr_resp.text[:200]}")
         except Exception as pcr_err:
-            print(f"⚠️ PCR API error: {pcr_err}")
+            logger.info(f"⚠️ PCR API error: {pcr_err}")
 
         # Fallback: compute PCR locally from subscribed strikes OI if API failed
         if pcr is None:
@@ -2118,7 +2267,7 @@ def get_tba_snapshot():
             total_pe_oi = sum(v['pe_oi'] for v in strike_data.values())
             pcr = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else None
             if pcr:
-                print(f"ℹ️ PCR: using local fallback ({pcr})")
+                logger.info(f"ℹ️ PCR: using local fallback ({pcr})")
 
         # ── Put OI & Call OI — ATM and ATM±1 strike ───────────────────
         atm_minus1 = atm_strike - 50 if atm_strike else None
@@ -2176,11 +2325,11 @@ def get_tba_snapshot():
                 if raw_mp is not None:
                     max_pain_strike = int(float(raw_mp))
                 else:
-                    print(f"⚠️ Max Pain API: no value in response — {str(mp_json)[:200]}")
+                    logger.info(f"⚠️ Max Pain API: no value in response — {str(mp_json)[:200]}")
             else:
-                print(f"⚠️ Max Pain API HTTP {mp_resp.status_code}: {mp_resp.text[:200]}")
+                logger.info(f"⚠️ Max Pain API HTTP {mp_resp.status_code}: {mp_resp.text[:200]}")
         except Exception as mp_err:
-            print(f"⚠️ Max Pain API error: {mp_err}")
+            logger.info(f"⚠️ Max Pain API error: {mp_err}")
 
         # Fallback: local max pain calculation from subscribed strikes OI
         if max_pain_strike is None:
@@ -2195,7 +2344,7 @@ def get_tba_snapshot():
                     min_pain = pain
                     max_pain_strike = int(test_strike)
             if max_pain_strike:
-                print(f"ℹ️ Max Pain: using local fallback ({max_pain_strike})")
+                logger.info(f"ℹ️ Max Pain: using local fallback ({max_pain_strike})")
 
         # ── IV (ATM straddle average) ──────────────────────────────────
         try:
@@ -2401,7 +2550,7 @@ def get_tba_snapshot():
         })
 
     except Exception as e:
-        print(f"❌ TBA snapshot error: {e}")
+        logger.error(f"❌ TBA snapshot error: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
 

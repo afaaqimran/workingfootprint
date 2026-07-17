@@ -7,6 +7,10 @@ import uuid
 import requests
 import MarketDataFeed_pb2 as pb
 from google.protobuf.json_format import MessageToDict
+from log_manager import get_logger
+
+# Initialize logger
+logger = get_logger()
 
 # Patch websocket-client to use the real (non-eventlet) socket
 # This is needed because eventlet.monkey_patch() replaces the socket module
@@ -50,23 +54,36 @@ class UpstoxWebSocketV3:
         
         try:
             response = self.session.get(url, headers=headers, timeout=10)
-            print(f"🔑 Auth response: {response.status_code} — {response.text[:300]}")
-            if response.status_code == 200:
+            logger.info(f"🔑 Auth response: {response.status_code} — {response.text[:300]}")
+
+            # Try to parse JSON response
+            try:
                 data = response.json()
+            except Exception as json_error:
+                # If JSON parsing fails, it's likely an HTML error page
+                logger.error(f"❌ Failed to parse JSON response: {json_error}")
+                logger.error(f"❌ Response is not JSON (likely an error page): {response.text[:500]}")
+                if response.status_code == 401:
+                    logger.error(f"❌ Access token expired or invalid — please re-login")
+                    self.stop_event.set()
+                return None
+
+            if response.status_code == 200:
                 if data.get("status") == "success":
                     ws_url = data["data"]["authorized_redirect_uri"]
-                    print(f"✅ Got WS URL: {ws_url[:60]}...")
+                    logger.info(f"✅ Got WS URL: {ws_url[:60]}...")
                     return ws_url
-                print(f"❌ Auth status not success: {data}")
+                logger.error(f"❌ Auth status not success: {data}")
                 return None
             elif response.status_code == 401:
-                print(f"❌ Access token expired or invalid — please re-login")
+                logger.error(f"❌ Access token expired or invalid — please re-login")
+                logger.error(f"❌ Token details: {self.access_token[:50]}...")
                 self.stop_event.set()  # Stop retrying on auth failure
                 return None
-            print(f"❌ API Error {response.status_code}: {response.text[:200]}")
+            logger.error(f"❌ API Error {response.status_code}: {data if isinstance(data, dict) else response.text[:200]}")
             return None
         except Exception as e:
-            print(f"❌ Connection error: {e}")
+            logger.error(f"❌ Connection error: {e}")
             return None
 
     def connect(self):
@@ -87,12 +104,12 @@ class UpstoxWebSocketV3:
             try:
                 ws_url = self.get_authorized_url()
                 if not ws_url:
-                    print(f"⚠️ Failed to get URL, retrying in {self.reconnect_delay}s...")
+                    logger.info(f"⚠️ Failed to get URL, retrying in {self.reconnect_delay}s...")
                     time.sleep(self.reconnect_delay)
                     self.reconnect_delay = min(self.reconnect_delay * 2, 60)
                     continue
 
-                print(f"🔗 (Re)Connecting to Upstox WebSocket...")
+                logger.info(f"🔗 (Re)Connecting to Upstox WebSocket...")
                 
                 self.ws = websocket.WebSocketApp(
                     ws_url,
@@ -101,20 +118,26 @@ class UpstoxWebSocketV3:
                     on_error=self.on_error,
                     on_close=self.on_close
                 )
-                
+
                 # run_forever blocks until the connection is closed
-                self.ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
+                # SSL/TLS verification enabled for secure connections (prevents MITM attacks)
+                sslopt = {
+                    "cert_reqs": ssl.CERT_REQUIRED,  # Require valid certificate
+                    "check_hostname": True,           # Verify hostname matches certificate
+                    "ssl_version": ssl.PROTOCOL_TLSv1_2  # Minimum TLS 1.2
+                }
+                self.ws.run_forever(sslopt=sslopt)
                 
             except Exception as e:
-                print(f"❌ Critical error in connection loop: {e}")
+                logger.error(f"❌ Critical error in connection loop: {e}")
             
             # If we get here, the connection has closed
             if not self.stop_event.is_set():
-                print(f"⚠️ Connection lost. Reconnecting in {self.reconnect_delay}s...")
+                logger.info(f"⚠️ Connection lost. Reconnecting in {self.reconnect_delay}s...")
                 time.sleep(self.reconnect_delay)
                 self.reconnect_delay = min(self.reconnect_delay * 2, 60)
             else:
-                print("🛑 WebSocket loop stopped by user")
+                logger.info("🛑 WebSocket loop stopped by user")
 
     def _send_subscribe(self, instrument_keys, mode="full"):
         """Send subscription message over the WebSocket (internal)"""
@@ -128,9 +151,9 @@ class UpstoxWebSocketV3:
                 }
             }
             self.ws.send(json.dumps(request).encode('utf-8'), opcode=websocket.ABNF.OPCODE_BINARY)
-            print(f"📤 Subscribed to {len(instrument_keys)} instruments in {mode} mode")
+            logger.info(f"📤 Subscribed to {len(instrument_keys)} instruments in {mode} mode")
         except Exception as e:
-            print(f"❌ Error during subscription: {e}")
+            logger.error(f"❌ Error during subscription: {e}")
 
     def subscribe(self, instrument_keys, mode="full"):
         """Subscribe to instruments"""
@@ -140,7 +163,7 @@ class UpstoxWebSocketV3:
             self.instrument_modes[k] = mode
         
         if not self.ws or not self.ws.sock or not self.ws.sock.connected:
-            print("⚠️ WebSocket not connected, subscription queued")
+            logger.info("⚠️ WebSocket not connected, subscription queued")
             return
         
         self._send_subscribe(instrument_keys, mode)
@@ -159,12 +182,12 @@ class UpstoxWebSocketV3:
                 "data": {"instrumentKeys": list(instrument_keys)}
             }
             self.ws.send(json.dumps(request).encode('utf-8'), opcode=websocket.ABNF.OPCODE_BINARY)
-            print(f"📤 Unsubscribed {len(instrument_keys)} instruments")
+            logger.info(f"📤 Unsubscribed {len(instrument_keys)} instruments")
         except Exception as e:
-            print(f"❌ Error during unsubscription: {e}")
+            logger.error(f"❌ Error during unsubscription: {e}")
 
     def on_open(self, ws):
-        print("✅ WebSocket Connected")
+        logger.info("✅ WebSocket Connected")
         self.reconnect_delay = 1  # Reset backoff on successful connection
         
         # Resubscribe if we have pending instruments, grouped by mode
@@ -198,20 +221,20 @@ class UpstoxWebSocketV3:
                     self.on_data_callback(data)
                     
         except Exception as e:
-            print(f"❌ Error processing message: {e}")
+            logger.error(f"❌ Error processing message: {e}")
 
     def on_error(self, ws, error):
-        print(f"❌ WebSocket Error: {error}")
+        logger.error(f"❌ WebSocket Error: {error}")
         if self.on_error_callback:
             # Don't propagate every error up to kill the app, just log it
             # self.on_error_callback(error)
             pass
 
     def on_close(self, ws, close_status_code, close_msg):
-        print(f"🔌 WebSocket Closed: {close_status_code} - {close_msg}")
+        logger.info(f"🔌 WebSocket Closed: {close_status_code} - {close_msg}")
 
     def disconnect(self):
-        print("🛑 Disconnecting WebSocket...")
+        logger.info("🛑 Disconnecting WebSocket...")
         self.stop_event.set()
         if self.ws:
             self.ws.close()

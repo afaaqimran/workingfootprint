@@ -5,3 +5,10 @@ instruments_cache.json
 .DS_Store
 footprint_web_app_upstox.py.backup.*
 .env
+.env.local
+.env.*.local
+*.db
+*.db-journal
+logs/
+.vscode/
+node_modules/

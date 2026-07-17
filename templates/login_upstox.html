@@ -233,6 +233,17 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({})
             });
+
+            // Check if response is JSON
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                errorMsg.textContent = 'Server error: Invalid response format. Check console logs.';
+                errorMsg.style.display = 'block';
+                console.error('Expected JSON but got:', contentType);
+                console.error('Response:', await response.text());
+                return;
+            }
+
             const result = await response.json();
             if (result.success) {
                 successMsg.textContent = '✓ ' + result.message;
@@ -247,12 +258,13 @@
                     setTimeout(() => { window.location.href = '/'; }, 1000);
                 }
             } else {
-                errorMsg.textContent = result.message;
+                errorMsg.textContent = result.message || 'Login failed';
                 errorMsg.style.display = 'block';
             }
         } catch (err) {
-            errorMsg.textContent = 'Connection error: ' + err.message;
+            errorMsg.textContent = 'Connection error: ' + err.message + ' (Check browser console for details)';
             errorMsg.style.display = 'block';
+            console.error('Login error:', err);
         } finally {
             loginBtn.disabled = false;
             loginBtn.textContent = 'Login';
